@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+ENV/
+.env
+
+# Flask
+instance/
+.webassets-cache
+.env
+
+# Database
+*.db
+*.db-journal
+
+# Uploaded files
+uploads/
+clean_cvs/
+blacklisted_cvs/
+
+# Exports
+*.csv
+*.xlsx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
