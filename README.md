@@ -1,0 +1,2 @@
+Enterprise Flask application for automated CV screening against a centralized SQLite blacklist. Implements multi-format document processing (PDF/DOCX) with PyPDF2 and python-docx, featuring real-time folder scanning, fuzzy name matching, and automatic file segregation. Deployed on Hostinger VPS with Gunicorn WSGI server, utilizing pandas for Excel/CSV import/export. The system provides RESTful endpoints with Jinja2 templating, enabling HR teams to batch-process CVs, maintain cross-company blacklists, and generate audit trails through an intuitive dashboard interface.
+
