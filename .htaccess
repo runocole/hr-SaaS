@@ -1,0 +1,10 @@
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
+PassengerApp /home/u854686377/public_html/blacklist
+PassengerAppType wsgi
+PassengerStartupFile passenger_wsgi.py
+PassengerPython /home/u854686377/virtualenv/public_html/blacklist/3.11/bin/python3.11
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
+
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://blacklist.oticgs.com/$1 [R=301,L]

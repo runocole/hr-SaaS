@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 import PyPDF2
 import docx
+import pandas as pd
 
 app = Flask(__name__)
 app.secret_key = "otic-blacklist-secret"
@@ -88,6 +89,54 @@ def search_name_in_file(filepath, blacklisted_names):
         if name.lower() in text:
             return name
     return None
+
+def get_folder_structure():
+    """Get folder structure for clean and blacklisted CVs"""
+    clean_folders = []
+    blacklisted_folders = []
+    
+    # Get clean folders
+    if os.path.exists(CLEAN_FOLDER):
+        for item in os.listdir(CLEAN_FOLDER):
+            item_path = os.path.join(CLEAN_FOLDER, item)
+            if os.path.isdir(item_path):
+                files = []
+                for f in os.listdir(item_path):
+                    file_path = os.path.join(item_path, f)
+                    if os.path.isfile(file_path):
+                        size = f"{os.path.getsize(file_path) / 1024:.1f} KB"
+                        mtime = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%m-%d %H:%M')
+                        files.append({'name': f, 'size': size, 'date': mtime})
+                clean_folders.append({
+                    'name': item,
+                    'files': files,
+                    'count': len(files)
+                })
+    
+    # Get blacklisted folders
+    if os.path.exists(BLACKLISTED_FOLDER):
+        for item in os.listdir(BLACKLISTED_FOLDER):
+            item_path = os.path.join(BLACKLISTED_FOLDER, item)
+            if os.path.isdir(item_path):
+                files = []
+                for f in os.listdir(item_path):
+                    file_path = os.path.join(item_path, f)
+                    if os.path.isfile(file_path):
+                        size = f"{os.path.getsize(file_path) / 1024:.1f} KB"
+                        mtime = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%m-%d %H:%M')
+                        files.append({
+                            'name': f, 
+                            'size': size, 
+                            'date': mtime,
+                            'matched_name': 'Unknown'
+                        })
+                blacklisted_folders.append({
+                    'name': item,
+                    'files': files,
+                    'count': len(files)
+                })
+    
+    return clean_folders, blacklisted_folders
 
 HTML = """
 <!DOCTYPE html>
@@ -271,6 +320,32 @@ HTML = """
             margin-bottom: 20px;
         }
         
+        .folder-name-input {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+        
+        .folder-name-input label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #374151;
+            font-size: 14px;
+        }
+        
+        .folder-name-input input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        .folder-name-input input:focus {
+            outline: none;
+            border-color: #ef4444;
+        }
+        
         .upload-area {
             border: 2px dashed #d1d5db;
             border-radius: 12px;
@@ -424,6 +499,91 @@ HTML = """
             margin-bottom: 8px;
         }
         
+        /* FOLDERS GRID */
+        .folders-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .folder-card {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .folder-card:hover {
+            border-color: #ef4444;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+        
+        .folder-card.clean:hover {
+            border-color: #16a34a;
+        }
+        
+        .folder-card.blacklisted:hover {
+            border-color: #dc2626;
+        }
+        
+        .folder-card i {
+            font-size: 36px;
+            color: #6b7280;
+            margin-bottom: 12px;
+        }
+        
+        .folder-card.clean i {
+            color: #16a34a;
+        }
+        
+        .folder-card.blacklisted i {
+            color: #dc2626;
+        }
+        
+        .folder-card h4 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .folder-card p {
+            color: #6b7280;
+            font-size: 14px;
+        }
+        
+        .folder-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        .folder-header h3 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #111827;
+        }
+        
+        .back-btn {
+            padding: 8px 16px;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .back-btn:hover {
+            background: #f9fafb;
+        }
+        
         /* FOLDERS LIST */
         .folders-section {
             background: #ffffff;
@@ -502,7 +662,7 @@ HTML = """
         }
         
         .table-header {
-            padding: 20px 24px;
+            padding: 16px 20px;
             border-bottom: 1px solid #e5e7eb;
             background: #f9fafb;
             display: flex;
@@ -511,21 +671,21 @@ HTML = """
         }
         
         .table-header h4 {
-            font-size: 16px;
+            font-size: 15px;
             font-weight: 600;
             color: #111827;
         }
         
         .table-header span {
             color: #6b7280;
-            font-size: 14px;
+            font-size: 13px;
             background: #f3f4f6;
-            padding: 4px 12px;
-            border-radius: 20px;
+            padding: 4px 10px;
+            border-radius: 16px;
         }
         
         .table-wrapper {
-            max-height: 500px;
+            max-height: 400px;
             overflow-y: auto;
         }
         
@@ -537,10 +697,12 @@ HTML = """
         
         th {
             background: #f9fafb;
-            padding: 16px 20px;
+            padding: 14px 16px;
             text-align: left;
             font-weight: 600;
             color: #374151;
+            font-size: 13px;
+            letter-spacing: 0.3px;
             border-bottom: 1px solid #e5e7eb;
             position: sticky;
             top: 0;
@@ -548,7 +710,7 @@ HTML = """
         }
         
         td {
-            padding: 16px 20px;
+            padding: 14px 16px;
             border-bottom: 1px solid #e5e7eb;
             color: #1f2937;
         }
@@ -562,7 +724,7 @@ HTML = """
             border: none;
             color: #9ca3af;
             cursor: pointer;
-            padding: 8px 12px;
+            padding: 6px 10px;
             border-radius: 6px;
             transition: all 0.2s;
         }
@@ -577,7 +739,7 @@ HTML = """
             border: none;
             color: #3b82f6;
             cursor: pointer;
-            padding: 8px 12px;
+            padding: 6px 10px;
             border-radius: 6px;
         }
         
@@ -592,9 +754,38 @@ HTML = """
             border-radius: 4px;
             font-size: 12px;
             font-weight: 500;
+            display: inline-block;
         }
         
-        /* MODAL - IMPROVED STYLING */
+        /* FILES TABLE */
+        .files-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        
+        .files-table th {
+            background: #f9fafb;
+            padding: 14px 20px;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            font-size: 13px;
+            letter-spacing: 0.3px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .files-table td {
+            padding: 14px 20px;
+            border-bottom: 1px solid #e5e7eb;
+            color: #1f2937;
+        }
+        
+        .files-table tr:hover td {
+            background: #f9fafb;
+        }
+        
+        /* MODAL */
         .modal {
             display: none;
             position: fixed;
@@ -678,9 +869,9 @@ HTML = """
         .form-group input,
         .form-group select {
             width: 100%;
-            padding: 14px 16px;
+            padding: 12px 16px;
             border: 2px solid #e5e7eb;
-            border-radius: 10px;
+            border-radius: 8px;
             font-size: 14px;
             transition: all 0.2s;
             background: #f9fafb;
@@ -694,12 +885,6 @@ HTML = """
             box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.1);
         }
         
-        .form-group input:hover,
-        .form-group select:hover {
-            border-color: #d1d5db;
-            background: white;
-        }
-        
         .modal-actions {
             display: flex;
             gap: 12px;
@@ -707,9 +892,9 @@ HTML = """
         }
         
         .btn {
-            padding: 14px 28px;
+            padding: 12px 24px;
             border: none;
-            border-radius: 10px;
+            border-radius: 8px;
             font-size: 15px;
             font-weight: 600;
             cursor: pointer;
@@ -741,12 +926,12 @@ HTML = """
         
         /* FLASH MESSAGES */
         .flash-message {
-            padding: 16px 20px;
+            padding: 14px 18px;
             margin-bottom: 24px;
-            border-radius: 10px;
+            border-radius: 8px;
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
             animation: slideIn 0.3s;
         }
         
@@ -763,7 +948,7 @@ HTML = """
         }
         
         .flash-message i {
-            font-size: 20px;
+            font-size: 18px;
         }
         
         /* Loading */
@@ -893,7 +1078,7 @@ HTML = """
                         </div>
                         <div class="folder-info">
                             <div class="folder-name">Clean CVs</div>
-                            <div class="folder-count">{{ clean_count }} files</div>
+                            <div class="folder-count">{{ clean_folders|length }} folders</div>
                         </div>
                     </div>
                     
@@ -903,7 +1088,7 @@ HTML = """
                         </div>
                         <div class="folder-info">
                             <div class="folder-name">Blacklisted CVs</div>
-                            <div class="folder-count">{{ blacklisted_count }} files</div>
+                            <div class="folder-count">{{ blacklisted_folders|length }} folders</div>
                         </div>
                     </div>
                 </div>
@@ -949,18 +1134,23 @@ HTML = """
             <!-- Scan Page -->
             <div id="page-scan" class="page">
                 <div class="upload-section">
-                    <h3>📁 Upload CV Folder to Scan</h3>
+                    <h3>📁 Upload CV Folder</h3>
                     
                     <form method="POST" action="/scan" enctype="multipart/form-data" id="scanForm">
+                        <div class="folder-name-input">
+                            <label><i class="fas fa-folder-plus" style="color: #ef4444; margin-right: 6px;"></i> Folder Name (e.g., Operations, Accounts, Marketing)</label>
+                            <input type="text" name="folder_name" id="folderName" placeholder="Enter folder name..." required>
+                        </div>
+                        
                         <div class="upload-area" onclick="document.getElementById('folderInput').click()">
                             <i class="fas fa-cloud-upload-alt"></i>
-                            <p>Click to select a folder containing CVs</p>
+                            <p>Click to select folder containing CVs</p>
                             <p style="font-size: 12px; margin-top: 8px;">Supports: PDF, DOCX, DOC, TXT</p>
                         </div>
                         
                         <input type="file" name="folder" id="folderInput" webkitdirectory directory multiple style="display: none;" required>
                         
-                        <button type="submit" class="scan-btn" onclick="showLoading()">
+                        <button type="submit" class="scan-btn" onclick="return validateAndShowLoading()">
                             <i class="fas fa-search"></i> Start Scan
                         </button>
                     </form>
@@ -973,7 +1163,7 @@ HTML = """
                 
                 {% if scan_results %}
                 <div class="results-section">
-                    <div class="results-header">Scan Complete!</div>
+                    <div class="results-header">Scan Complete: {{ scan_results.folder_name }}</div>
                     
                     <div class="results-grid">
                         <div class="result-card clean">
@@ -995,26 +1185,18 @@ HTML = """
                         {% endfor %}
                     </div>
                     {% endif %}
-                    
-                    <div class="folder-actions">
-                        <button class="folder-btn" onclick="showPage('clean')">
-                            <i class="fas fa-folder-open"></i>
-                            <br>View Clean CVs
-                        </button>
-                        <button class="folder-btn" onclick="showPage('blacklisted-files')">
-                            <i class="fas fa-folder-open"></i>
-                            <br>View Blacklisted CVs
-                        </button>
-                    </div>
                 </div>
                 {% endif %}
             </div>
             
             <!-- Blacklist Management Page -->
             <div id="page-blacklist" class="page">
-                <div style="margin-bottom: 24px;">
-                    <button class="action-btn green" onclick="showAddModal()" style="padding: 14px 28px; background: #16a34a; color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">
+                <div style="margin-bottom: 24px; display: flex; gap: 16px;">
+                    <button class="action-btn green" onclick="showAddModal()" style="padding: 12px 24px; background: #16a34a; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">
                         <i class="fas fa-plus"></i> Add to Blacklist
+                    </button>
+                    <button class="action-btn" onclick="showImportModal()" style="padding: 12px 24px; background: white; border: 2px solid #16a34a; color: #16a34a; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">
+                        <i class="fas fa-upload"></i> Import from File
                     </button>
                 </div>
                 
@@ -1062,85 +1244,121 @@ HTML = """
             
             <!-- Clean CVs Page -->
             <div id="page-clean" class="page">
-                <div class="table-container">
-                    <div class="table-header">
-                        <h4><i class="fas fa-check-circle" style="color: #16a34a; margin-right: 8px;"></i> Clean CVs</h4>
-                        <span>{{ clean_count }} files</span>
+                <div class="folders-section">
+                    <div class="folder-header">
+                        <h3><i class="fas fa-check-circle" style="color: #16a34a;"></i> Clean CV Folders</h3>
                     </div>
-                    <div class="table-wrapper" style="max-height: 600px;">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Filename</th>
-                                    <th>Size</th>
-                                    <th>Date Scanned</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for file in clean_files %}
-                                <tr>
-                                    <td>{{ file.name }}</td>
-                                    <td>{{ file.size }}</td>
-                                    <td>{{ file.date }}</td>
-                                    <td>
-                                         <a href="/files/clean/{{ file.name }}" target="_blank">
-                                            <button class="view-btn">
-                                                <i class="fas fa-eye"></i>
-                                            </button>
-                                        </a>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
+                    
+                    {% if current_clean_folder %}
+                        <div style="margin-bottom: 20px;">
+                            <button class="back-btn" onclick="window.location.href='/clean'">
+                                <i class="fas fa-arrow-left"></i> Back to Folders
+                            </button>
+                            <h4 style="margin-top: 16px; font-size: 16px;">{{ current_clean_folder }}</h4>
+                        </div>
+                        <div class="table-container">
+                            <table class="files-table">
+                                <thead>
+                                    <tr>
+                                        <th>Filename</th>
+                                        <th>Size</th>
+                                        <th>Date</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for file in current_clean_files %}
+                                    <tr>
+                                        <td>{{ file.name }}</td>
+                                        <td>{{ file.size }}</td>
+                                        <td>{{ file.date }}</td>
+                                        <td>
+                                            <a href="/files/clean/{{ current_clean_folder }}/{{ file.name }}" target="_blank">
+                                                <button class="view-btn">
+                                                    <i class="fas fa-eye"></i>
+                                                </button>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="folders-grid">
+                            {% for folder in clean_folders %}
+                            <div class="folder-card clean" onclick="window.location.href='/clean?folder={{ folder.name }}'">
+                                <i class="fas fa-folder"></i>
+                                <h4>{{ folder.name }}</h4>
+                                <p>{{ folder.count }} files</p>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
                 </div>
             </div>
             
             <!-- Blacklisted Files Page -->
             <div id="page-blacklisted-files" class="page">
-                <div class="table-container">
-                    <div class="table-header">
-                        <h4><i class="fas fa-exclamation-triangle" style="color: #dc2626; margin-right: 8px;"></i> Blacklisted CVs</h4>
-                        <span>{{ blacklisted_count }} files</span>
+                <div class="folders-section">
+                    <div class="folder-header">
+                        <h3><i class="fas fa-exclamation-triangle" style="color: #dc2626;"></i> Blacklisted CV Folders</h3>
                     </div>
-                    <div class="table-wrapper" style="max-height: 600px;">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Filename</th>
-                                    <th>Size</th>
-                                    <th>Matched Name</th>
-                                    <th>Date Scanned</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for file in blacklisted_files %}
-                                <tr>
-                                    <td>{{ file.name }}</td>
-                                    <td>{{ file.size }}</td>
-                                    <td><span class="matched-badge">{{ file.matched_name }}</span></td>
-                                    <td>{{ file.date }}</td>
-                                    <td>
-                                        <a href="/files/blacklisted/{{ file.name }}" target="_blank">
-                                            <button class="view-btn">
-                                                <i class="fas fa-eye"></i>
-                                            </button>
-                                        </a>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
+                    
+                    {% if current_blacklisted_folder %}
+                        <div style="margin-bottom: 20px;">
+                            <button class="back-btn" onclick="window.location.href='/blacklisted-files'">
+                                <i class="fas fa-arrow-left"></i> Back to Folders
+                            </button>
+                            <h4 style="margin-top: 16px; font-size: 16px;">{{ current_blacklisted_folder }}</h4>
+                        </div>
+                        <div class="table-container">
+                            <table class="files-table">
+                                <thead>
+                                    <tr>
+                                        <th>Filename</th>
+                                        <th>Size</th>
+                                        <th>Matched Name</th>
+                                        <th>Date</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for file in current_blacklisted_files %}
+                                    <tr>
+                                        <td>{{ file.name }}</td>
+                                        <td>{{ file.size }}</td>
+                                        <td><span class="matched-badge">{{ file.matched_name }}</span></td>
+                                        <td>{{ file.date }}</td>
+                                        <td>
+                                            <a href="/files/blacklisted/{{ current_blacklisted_folder }}/{{ file.name }}" target="_blank">
+                                                <button class="view-btn">
+                                                    <i class="fas fa-eye"></i>
+                                                </button>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="folders-grid">
+                            {% for folder in blacklisted_folders %}
+                            <div class="folder-card blacklisted" onclick="window.location.href='/blacklisted-files?folder={{ folder.name }}'">
+                                <i class="fas fa-folder"></i>
+                                <h4>{{ folder.name }}</h4>
+                                <p>{{ folder.count }} files</p>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
     </div>
     
-    <!-- Improved Add Modal -->
+    <!-- Add Modal -->
     <div id="addModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -1169,14 +1387,20 @@ HTML = """
                 
                 <div class="form-group">
                     <label>Reason <span style="color: #ef4444;">*</span></label>
-                    <select name="reason" required>
+                    <select name="reason" id="reasonSelect" onchange="toggleOtherReason()" required>
                         <option value="">Select reason</option>
                         <option value="No-show interview">No-show interview</option>
                         <option value="No-show second interview">No-show second interview</option>
                         <option value="Repeated no-show">Repeated no-show</option>
                         <option value="Falsified documents">Falsified documents</option>
                         <option value="Unprofessional conduct">Unprofessional conduct</option>
+                        <option value="Other">Other (specify)</option>
                     </select>
+                </div>
+                
+                <div id="otherReasonDiv" style="display: none; margin-bottom: 20px;">
+                    <label>Please specify reason:</label>
+                    <input type="text" name="other_reason" id="otherReason" placeholder="Enter custom reason..." style="width: 100%; padding: 12px 16px; border: 2px solid #e5e7eb; border-radius: 8px; margin-top: 8px;">
                 </div>
                 
                 <div class="form-group">
@@ -1186,9 +1410,43 @@ HTML = """
                 
                 <div class="modal-actions">
                     <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-save"></i> Save to Blacklist
+                        <i class="fas fa-save"></i> Save
                     </button>
                     <button type="button" class="btn btn-outline" onclick="hideAddModal()">
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Import Modal -->
+    <div id="importModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>
+                    <i class="fas fa-upload"></i>
+                    Import Blacklist
+                </h3>
+                <button class="close-modal" onclick="hideImportModal()">&times;</button>
+            </div>
+            
+            <form method="POST" action="/import" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label>Select File <span style="color: #ef4444;">*</span></label>
+                    <input type="file" name="file" accept=".csv, .xlsx, .xls" required style="padding: 10px; border: 2px dashed #d1d5db; width: 100%;">
+                    <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
+                        <i class="fas fa-info-circle"></i> 
+                        Supported: CSV, Excel (.xlsx, .xls)<br>
+                        Columns: Name, Phone, Position, Reason
+                    </p>
+                </div>
+                
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-check"></i> Import
+                    </button>
+                    <button type="button" class="btn btn-outline" onclick="hideImportModal()">
                         Cancel
                     </button>
                 </div>
@@ -1207,14 +1465,46 @@ HTML = """
         
         function showAddModal() {
             document.getElementById('addModal').style.display = 'flex';
+            document.getElementById('reasonSelect').value = '';
+            document.getElementById('otherReasonDiv').style.display = 'none';
+            document.getElementById('otherReason').value = '';
         }
         
         function hideAddModal() {
             document.getElementById('addModal').style.display = 'none';
         }
         
-        function showLoading() {
+        function showImportModal() {
+            document.getElementById('importModal').style.display = 'flex';
+        }
+        
+        function hideImportModal() {
+            document.getElementById('importModal').style.display = 'none';
+        }
+        
+        function toggleOtherReason() {
+            var select = document.getElementById('reasonSelect');
+            var otherDiv = document.getElementById('otherReasonDiv');
+            var otherInput = document.getElementById('otherReason');
+            
+            if (select.value === 'Other') {
+                otherDiv.style.display = 'block';
+                otherInput.required = true;
+            } else {
+                otherDiv.style.display = 'none';
+                otherInput.required = false;
+                otherInput.value = '';
+            }
+        }
+        
+        function validateAndShowLoading() {
+            var folderName = document.getElementById('folderName').value;
+            if (!folderName) {
+                alert('Please enter a folder name');
+                return false;
+            }
             document.getElementById('loading').style.display = 'block';
+            return true;
         }
         
         window.onclick = function(event) {
@@ -1223,10 +1513,13 @@ HTML = """
             }
         }
         
-        // Auto-submit when folder selected
         document.getElementById('folderInput').addEventListener('change', function() {
-            if (this.files.length > 0) {
+            var folderName = document.getElementById('folderName').value;
+            if (this.files.length > 0 && folderName) {
                 document.getElementById('scanForm').submit();
+            } else if (!folderName) {
+                alert('Please enter a folder name first');
+                this.value = '';
             }
         });
     </script>
@@ -1245,12 +1538,13 @@ def home():
     total = conn.execute("SELECT COUNT(*) FROM blacklist").fetchone()[0]
     
     # Get folder stats
-    clean_count = len(os.listdir(CLEAN_FOLDER)) if os.path.exists(CLEAN_FOLDER) else 0
-    blacklisted_count = len(os.listdir(BLACKLISTED_FOLDER)) if os.path.exists(BLACKLISTED_FOLDER) else 0
+    clean_folders, blacklisted_folders = get_folder_structure()
+    clean_count = len(clean_folders)
+    blacklisted_count = len(blacklisted_folders)
     
     conn.close()
     
-    # Get clean files list
+    # Get clean files list (for backward compatibility)
     clean_files = []
     if os.path.exists(CLEAN_FOLDER):
         for f in os.listdir(CLEAN_FOLDER):
@@ -1260,7 +1554,7 @@ def home():
                 mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
                 clean_files.append({'name': f, 'size': size, 'date': mtime})
     
-    # Get blacklisted files list
+    # Get blacklisted files list (for backward compatibility)
     blacklisted_files = []
     if os.path.exists(BLACKLISTED_FOLDER):
         for f in os.listdir(BLACKLISTED_FOLDER):
@@ -1268,8 +1562,6 @@ def home():
             if os.path.isfile(filepath):
                 size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
                 mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
-                # Try to extract matched name from filename or store separately
-                # For now, we'll just show "Unknown" - you can enhance this later
                 blacklisted_files.append({'name': f, 'size': size, 'date': mtime, 'matched_name': 'Unknown'})
     
     return render_template_string(
@@ -1281,6 +1573,12 @@ def home():
         scanned_today=clean_count + blacklisted_count,
         clean_files=clean_files,
         blacklisted_files=blacklisted_files,
+        clean_folders=clean_folders,
+        blacklisted_folders=blacklisted_folders,
+        current_clean_folder=None,
+        current_clean_files=[],
+        current_blacklisted_folder=None,
+        current_blacklisted_files=[],
         scan_results=None
     )
 
@@ -1288,31 +1586,31 @@ def home():
 def scan_folder():
     """Scan uploaded folder for CVs"""
     files = request.files.getlist('folder')
+    folder_name = request.form.get('folder_name', '').strip()
     
     if not files:
         flash("❌ No files selected", "error")
-        return redirect("/")
+        return redirect("/#scan")
+    
+    if not folder_name:
+        flash("❌ Please enter a folder name", "error")
+        return redirect("/#scan")
+    
+    # Clean folder name
+    folder_name = "".join(c for c in folder_name if c.isalnum() or c in (' ', '-', '_')).strip()
+    folder_name = folder_name.replace(' ', '_')
     
     # Get blacklisted names from database
     conn = sqlite3.connect("blacklist.db")
     blacklisted = [row[0] for row in conn.execute("SELECT name FROM blacklist").fetchall()]
     conn.close()
     
-    # Clear previous scan folders safely
-    for folder in [CLEAN_FOLDER, BLACKLISTED_FOLDER, UPLOAD_FOLDER]:
-        if os.path.exists(folder):
-            # Delete all contents but keep the folder
-            for filename in os.listdir(folder):
-                file_path = os.path.join(folder, filename)
-                try:
-                    if os.path.isfile(file_path) or os.path.islink(file_path):
-                        os.unlink(file_path)
-                    elif os.path.isdir(file_path):
-                        shutil.rmtree(file_path)
-                except Exception as e:
-                    print(f"Could not delete {file_path}: {e}")
-        else:
-            os.makedirs(folder, exist_ok=True)
+    # Create target folders
+    clean_target = os.path.join(CLEAN_FOLDER, folder_name)
+    blacklisted_target = os.path.join(BLACKLISTED_FOLDER, folder_name)
+    
+    os.makedirs(clean_target, exist_ok=True)
+    os.makedirs(blacklisted_target, exist_ok=True)
     
     clean_count = 0
     blacklisted_count = 0
@@ -1342,8 +1640,8 @@ def scan_folder():
             matched_name = search_name_in_file(temp_path, blacklisted)
             
             if matched_name:
-                # Move to blacklisted folder with safe name
-                dest = os.path.join(BLACKLISTED_FOLDER, os.path.basename(temp_path))
+                # Move to blacklisted folder
+                dest = os.path.join(blacklisted_target, os.path.basename(temp_path))
                 shutil.move(temp_path, dest)
                 blacklisted_count += 1
                 found_names.add(matched_name)
@@ -1352,14 +1650,20 @@ def scan_folder():
                     'matched_name': matched_name
                 })
             else:
-                # Move to clean folder with safe name
-                dest = os.path.join(CLEAN_FOLDER, os.path.basename(temp_path))
+                # Move to clean folder
+                dest = os.path.join(clean_target, os.path.basename(temp_path))
                 shutil.move(temp_path, dest)
                 clean_count += 1
     
     flash(f"✅ Scan complete! Clean: {clean_count}, Blacklisted: {blacklisted_count}", "success")
     
-    # Get updated stats for display
+    return redirect(f"/?scan_results=1&clean={clean_count}&blacklisted={blacklisted_count}&folder={folder_name}&names={','.join(found_names)}")
+
+@app.route("/clean")
+def view_clean():
+    """View clean folders or folder contents"""
+    folder_name = request.args.get('folder')
+    
     conn = sqlite3.connect("blacklist.db")
     rows = conn.execute(
         "SELECT name, phone, position, reason, date_added, added_by, id FROM blacklist ORDER BY date_added DESC"
@@ -1367,7 +1671,11 @@ def scan_folder():
     total = conn.execute("SELECT COUNT(*) FROM blacklist").fetchone()[0]
     conn.close()
     
-    # Get clean files list
+    clean_folders, blacklisted_folders = get_folder_structure()
+    clean_count = len(clean_folders)
+    blacklisted_count = len(blacklisted_folders)
+    
+    # Get clean files list (for backward compatibility)
     clean_files = []
     if os.path.exists(CLEAN_FOLDER):
         for f in os.listdir(CLEAN_FOLDER):
@@ -1377,83 +1685,7 @@ def scan_folder():
                 mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
                 clean_files.append({'name': f, 'size': size, 'date': mtime})
     
-    # Get blacklisted files list with matched names
-    blacklisted_files = []
-    if os.path.exists(BLACKLISTED_FOLDER):
-        for f in os.listdir(BLACKLISTED_FOLDER):
-            filepath = os.path.join(BLACKLISTED_FOLDER, f)
-            if os.path.isfile(filepath):
-                size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
-                mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
-                # Find matched name for this file
-                matched = next((item['matched_name'] for item in blacklisted_files_info if item['name'] == f), 'Unknown')
-                blacklisted_files.append({'name': f, 'size': size, 'date': mtime, 'matched_name': matched})
-    
-    return render_template_string(
-        HTML,
-        rows=rows,
-        total=total,
-        clean_count=clean_count,
-        blacklisted_count=blacklisted_count,
-        scanned_today=clean_count + blacklisted_count,
-        clean_files=clean_files,
-        blacklisted_files=blacklisted_files,
-        scan_results={
-            'clean': clean_count,
-            'blacklisted': blacklisted_count,
-            'found_names': list(found_names)
-        }
-    )
-
-@app.route("/add", methods=["POST"])
-def add():
-    conn = sqlite3.connect("blacklist.db")
-    conn.execute(
-        "INSERT INTO blacklist (name, phone, position, reason, date_added, added_by) VALUES (?,?,?,?,?,?)",
-        (
-            request.form["name"],
-            request.form.get("phone", ""),
-            request.form.get("position", ""),
-            request.form["reason"],
-            datetime.now().strftime("%Y-%m-%d"),
-            request.form.get("added_by", "HR")
-        )
-    )
-    conn.commit()
-    conn.close()
-    flash("✅ Added to blacklist successfully", "success")
-    return redirect("/")
-
-@app.route("/check", methods=["POST"])
-def check():
-    query = request.form["query"]
-    
-    conn = sqlite3.connect("blacklist.db")
-    
-    rows = conn.execute(
-        "SELECT name, phone, position, reason, date_added, added_by, id FROM blacklist ORDER BY date_added DESC"
-    ).fetchall()
-    
-    results = conn.execute(
-        "SELECT name, phone, position, reason, date_added FROM blacklist WHERE name LIKE ? OR phone LIKE ?",
-        (f"%{query}%", f"%{query}%")
-    ).fetchall()
-    
-    total = conn.execute("SELECT COUNT(*) FROM blacklist").fetchone()[0]
-    clean_count = len(os.listdir(CLEAN_FOLDER)) if os.path.exists(CLEAN_FOLDER) else 0
-    blacklisted_count = len(os.listdir(BLACKLISTED_FOLDER)) if os.path.exists(BLACKLISTED_FOLDER) else 0
-    
-    # Get clean files list
-    clean_files = []
-    if os.path.exists(CLEAN_FOLDER):
-        for f in os.listdir(CLEAN_FOLDER):
-            filepath = os.path.join(CLEAN_FOLDER, f)
-            if os.path.isfile(filepath):
-                size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
-                mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
-                clean_files.append({'name': f, 'size': size, 'date': mtime})
-    
-    # Get blacklisted files list
+    # Get blacklisted files list (for backward compatibility)
     blacklisted_files = []
     if os.path.exists(BLACKLISTED_FOLDER):
         for f in os.listdir(BLACKLISTED_FOLDER):
@@ -1463,7 +1695,19 @@ def check():
                 mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
                 blacklisted_files.append({'name': f, 'size': size, 'date': mtime, 'matched_name': 'Unknown'})
     
-    conn.close()
+    current_clean_files = []
+    current_clean_folder = None
+    
+    if folder_name:
+        folder_path = os.path.join(CLEAN_FOLDER, folder_name)
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            current_clean_folder = folder_name
+            for f in os.listdir(folder_path):
+                file_path = os.path.join(folder_path, f)
+                if os.path.isfile(file_path):
+                    size = f"{os.path.getsize(file_path) / 1024:.1f} KB"
+                    mtime = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%m-%d %H:%M')
+                    current_clean_files.append({'name': f, 'size': size, 'date': mtime})
     
     return render_template_string(
         HTML,
@@ -1474,8 +1718,110 @@ def check():
         scanned_today=clean_count + blacklisted_count,
         clean_files=clean_files,
         blacklisted_files=blacklisted_files,
-        check_result={"found": len(results) > 0, "data": results}
+        clean_folders=clean_folders,
+        blacklisted_folders=blacklisted_folders,
+        current_clean_folder=current_clean_folder,
+        current_clean_files=current_clean_files,
+        current_blacklisted_folder=None,
+        current_blacklisted_files=[],
+        scan_results=None
     )
+
+@app.route("/blacklisted-files")
+def view_blacklisted():
+    """View blacklisted folders or folder contents"""
+    folder_name = request.args.get('folder')
+    
+    conn = sqlite3.connect("blacklist.db")
+    rows = conn.execute(
+        "SELECT name, phone, position, reason, date_added, added_by, id FROM blacklist ORDER BY date_added DESC"
+    ).fetchall()
+    total = conn.execute("SELECT COUNT(*) FROM blacklist").fetchone()[0]
+    conn.close()
+    
+    clean_folders, blacklisted_folders = get_folder_structure()
+    clean_count = len(clean_folders)
+    blacklisted_count = len(blacklisted_folders)
+    
+    # Get clean files list (for backward compatibility)
+    clean_files = []
+    if os.path.exists(CLEAN_FOLDER):
+        for f in os.listdir(CLEAN_FOLDER):
+            filepath = os.path.join(CLEAN_FOLDER, f)
+            if os.path.isfile(filepath):
+                size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
+                mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
+                clean_files.append({'name': f, 'size': size, 'date': mtime})
+    
+    # Get blacklisted files list (for backward compatibility)
+    blacklisted_files = []
+    if os.path.exists(BLACKLISTED_FOLDER):
+        for f in os.listdir(BLACKLISTED_FOLDER):
+            filepath = os.path.join(BLACKLISTED_FOLDER, f)
+            if os.path.isfile(filepath):
+                size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
+                mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
+                blacklisted_files.append({'name': f, 'size': size, 'date': mtime, 'matched_name': 'Unknown'})
+    
+    current_blacklisted_files = []
+    current_blacklisted_folder = None
+    
+    if folder_name:
+        folder_path = os.path.join(BLACKLISTED_FOLDER, folder_name)
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            current_blacklisted_folder = folder_name
+            for f in os.listdir(folder_path):
+                file_path = os.path.join(folder_path, f)
+                if os.path.isfile(file_path):
+                    size = f"{os.path.getsize(file_path) / 1024:.1f} KB"
+                    mtime = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%m-%d %H:%M')
+                    current_blacklisted_files.append({
+                        'name': f, 
+                        'size': size, 
+                        'date': mtime,
+                        'matched_name': 'Unknown'
+                    })
+    
+    return render_template_string(
+        HTML,
+        rows=rows,
+        total=total,
+        clean_count=clean_count,
+        blacklisted_count=blacklisted_count,
+        scanned_today=clean_count + blacklisted_count,
+        clean_files=clean_files,
+        blacklisted_files=blacklisted_files,
+        clean_folders=clean_folders,
+        blacklisted_folders=blacklisted_folders,
+        current_clean_folder=None,
+        current_clean_files=[],
+        current_blacklisted_folder=current_blacklisted_folder,
+        current_blacklisted_files=current_blacklisted_files,
+        scan_results=None
+    )
+
+@app.route("/add", methods=["POST"])
+def add():
+    reason = request.form["reason"]
+    if reason == "Other" and request.form.get("other_reason"):
+        reason = request.form["other_reason"]
+    
+    conn = sqlite3.connect("blacklist.db")
+    conn.execute(
+        "INSERT INTO blacklist (name, phone, position, reason, date_added, added_by) VALUES (?,?,?,?,?,?)",
+        (
+            request.form["name"],
+            request.form.get("phone", ""),
+            request.form.get("position", ""),
+            reason,
+            datetime.now().strftime("%Y-%m-%d"),
+            request.form.get("added_by", "HR")
+        )
+    )
+    conn.commit()
+    conn.close()
+    flash("✅ Added to blacklist successfully", "success")
+    return redirect("/")
 
 @app.route("/delete/<int:record_id>", methods=["POST"])
 def delete(record_id):
@@ -1500,32 +1846,99 @@ def export():
         writer.writerows(rows)
     
     return send_file(filename, as_attachment=True)
-@app.route("/files/<folder>/<filename>")
-def view_file(folder, filename):
-    """View a file"""
-    # Map the URL folder names to actual folder names
+
+@app.route("/import", methods=["POST"])
+def import_file():
+    file = request.files['file']
+    
+    if not file:
+        flash("❌ No file selected", "error")
+        return redirect("/")
+    
+    filename = file.filename
+    file.save(filename)
+    
+    count = 0
+    
+    try:
+        conn = sqlite3.connect("blacklist.db")
+        
+        if filename.endswith('.csv'):
+            with open(filename, 'r', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                rows = list(reader)
+                start_idx = 1 if rows and rows[0] and rows[0][0].lower() in ['name', 'fullname'] else 0
+                
+                for row in rows[start_idx:]:
+                    if row and len(row) >= 1 and row[0].strip():
+                        name = row[0].strip()
+                        phone = row[1].strip() if len(row) > 1 and row[1].strip() else ""
+                        position = row[2].strip() if len(row) > 2 and row[2].strip() else ""
+                        reason = row[3].strip() if len(row) > 3 and row[3].strip() else "Imported"
+                        
+                        conn.execute(
+                            "INSERT INTO blacklist (name, phone, position, reason, date_added, added_by) VALUES (?,?,?,?,?,?)",
+                            (name, phone, position, reason, datetime.now().strftime('%Y-%m-%d'), 'Import')
+                        )
+                        count += 1
+        
+        elif filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(filename)
+            
+            for _, row in df.iterrows():
+                name = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ""
+                if not name:
+                    continue
+                    
+                phone = str(row.iloc[1]) if len(row) > 1 and pd.notna(row.iloc[1]) else ""
+                position = str(row.iloc[2]) if len(row) > 2 and pd.notna(row.iloc[2]) else ""
+                reason = str(row.iloc[3]) if len(row) > 3 and pd.notna(row.iloc[3]) else "Imported"
+                
+                conn.execute(
+                    "INSERT INTO blacklist (name, phone, position, reason, date_added, added_by) VALUES (?,?,?,?,?,?)",
+                    (name, phone, position, reason, datetime.now().strftime('%Y-%m-%d'), 'Import')
+                )
+                count += 1
+        
+        else:
+            flash("❌ Unsupported file format. Use CSV or Excel.", "error")
+            os.remove(filename)
+            return redirect("/")
+        
+        conn.commit()
+        conn.close()
+        os.remove(filename)
+        
+        flash(f"✅ Successfully imported {count} records!", "success")
+        
+    except Exception as e:
+        flash(f"❌ Error importing file: {str(e)}", "error")
+        if os.path.exists(filename):
+            os.remove(filename)
+    
+    return redirect("/")
+
+@app.route("/files/<folder_type>/<path:filepath>")
+def view_nested_file(folder_type, filepath):
+    """View a file inside a folder"""
     folder_map = {
-        'clean': 'clean_cvs',
-        'blacklisted': 'blacklisted_cvs'
+        'clean': CLEAN_FOLDER,
+        'blacklisted': BLACKLISTED_FOLDER
     }
     
-    # Get the correct folder path
-    actual_folder = folder_map.get(folder)
-    
-    if not actual_folder:
-        flash("❌ Invalid folder", "error")
+    base_folder = folder_map.get(folder_type)
+    if not base_folder:
+        flash("❌ Invalid folder type", "error")
         return redirect("/")
     
-    # Build the full file path
-    file_path = os.path.join(actual_folder, filename)
+    full_path = os.path.join(base_folder, filepath)
     
-    # Check if file exists
-    if not os.path.exists(file_path):
-        flash(f"❌ File not found: {filename}", "error")
+    if not os.path.exists(full_path):
+        flash(f"❌ File not found", "error")
         return redirect("/")
     
-    # Send the file
-    return send_file(file_path)
+    return send_file(full_path)
+
 if __name__ == "__main__":
     print("="*50)
     print("OTIC CV SCANNER")
@@ -1534,4 +1947,4 @@ if __name__ == "__main__":
     print("📁 Clean CVs folder: clean_cvs")
     print("🚫 Blacklisted CVs folder: blacklisted_cvs")
     print("="*50)
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
