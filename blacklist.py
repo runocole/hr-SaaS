@@ -90,6 +90,23 @@ def search_name_in_file(filepath, blacklisted_names):
             return name
     return None
 
+def get_file_count():
+    """Get total file counts in clean and blacklisted folders"""
+    clean_files_count = 0
+    blacklisted_files_count = 0
+    
+    # Count files in clean_cvs folders
+    if os.path.exists(CLEAN_FOLDER):
+        for root, dirs, files in os.walk(CLEAN_FOLDER):
+            clean_files_count += len(files)
+    
+    # Count files in blacklisted_cvs folders
+    if os.path.exists(BLACKLISTED_FOLDER):
+        for root, dirs, files in os.walk(BLACKLISTED_FOLDER):
+            blacklisted_files_count += len(files)
+    
+    return clean_files_count, blacklisted_files_count
+
 def get_folder_structure():
     """Get folder structure for clean and blacklisted CVs"""
     clean_folders = []
@@ -305,45 +322,84 @@ HTML = """
         /* UPLOAD SECTION */
         .upload-section {
             background: #ffffff;
-            border-radius: 12px;
+            border-radius: 16px;
             padding: 32px;
             margin-bottom: 24px;
-            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
             border: 1px solid #e5e7eb;
-            text-align: center;
         }
         
         .upload-section h3 {
-            color: #374151;
-            font-size: 18px;
+            color: #111827;
+            font-size: 20px;
             font-weight: 600;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
         
         .folder-name-input {
-            margin-bottom: 20px;
-            text-align: left;
+            margin-bottom: 24px;
+            background: #f9fafb;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
         }
         
         .folder-name-input label {
             display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
+            margin-bottom: 10px;
+            font-weight: 600;
             color: #374151;
-            font-size: 14px;
+            font-size: 15px;
+        }
+        
+        .folder-name-input label i {
+            color: #ef4444;
+            margin-right: 8px;
+        }
+        
+        .folder-input-group {
+            display: flex;
+            gap: 12px;
         }
         
         .folder-name-input input {
-            width: 100%;
-            padding: 12px 16px;
+            flex: 1;
+            padding: 14px 18px;
             border: 2px solid #e5e7eb;
-            border-radius: 8px;
-            font-size: 14px;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.2s;
+            background: white;
         }
         
         .folder-name-input input:focus {
             outline: none;
             border-color: #ef4444;
+            box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+        }
+        
+        .save-folder-btn {
+            padding: 14px 28px;
+            background: #16a34a;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .save-folder-btn:hover {
+            background: #15803d;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
         }
         
         .upload-area {
@@ -353,6 +409,7 @@ HTML = """
             background: #f9fafb;
             cursor: pointer;
             transition: all 0.3s;
+            text-align: center;
         }
         
         .upload-area:hover {
@@ -373,19 +430,30 @@ HTML = """
         
         .scan-btn {
             margin-top: 24px;
-            padding: 14px 32px;
+            padding: 16px 32px;
             background: #ef4444;
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: 10px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: all 0.2s;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
         }
         
         .scan-btn:hover {
             background: #dc2626;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+        }
+        
+        .scan-btn i {
+            font-size: 18px;
         }
         
         /* SCAN RESULTS */
@@ -502,7 +570,7 @@ HTML = """
         /* FOLDERS GRID */
         .folders-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
             gap: 20px;
             margin-top: 20px;
         }
@@ -511,14 +579,15 @@ HTML = """
             background: white;
             border: 1px solid #e5e7eb;
             border-radius: 12px;
-            padding: 20px;
+            padding: 24px;
             cursor: pointer;
             transition: all 0.2s;
+            text-align: center;
         }
         
         .folder-card:hover {
             border-color: #ef4444;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
             transform: translateY(-2px);
         }
         
@@ -531,9 +600,9 @@ HTML = """
         }
         
         .folder-card i {
-            font-size: 36px;
+            font-size: 48px;
             color: #6b7280;
-            margin-bottom: 12px;
+            margin-bottom: 16px;
         }
         
         .folder-card.clean i {
@@ -548,6 +617,7 @@ HTML = """
             font-size: 18px;
             font-weight: 600;
             margin-bottom: 8px;
+            color: #111827;
         }
         
         .folder-card p {
@@ -559,29 +629,116 @@ HTML = """
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 16px;
+            margin-bottom: 24px;
         }
         
         .folder-header h3 {
-            font-size: 18px;
+            font-size: 20px;
             font-weight: 600;
             color: #111827;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
         
         .back-btn {
-            padding: 8px 16px;
+            padding: 10px 20px;
             background: white;
             border: 1px solid #e5e7eb;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 13px;
+            font-size: 14px;
+            font-weight: 500;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
+            transition: all 0.2s;
         }
         
         .back-btn:hover {
             background: #f9fafb;
+            border-color: #d1d5db;
+        }
+        
+        .back-btn i {
+            font-size: 14px;
+        }
+        
+        /* FILES TABLE */
+        .files-section {
+            background: white;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            overflow: hidden;
+        }
+        
+        .files-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #e5e7eb;
+            background: #f9fafb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .files-header h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #111827;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .files-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        
+        .files-table th {
+            background: #f9fafb;
+            padding: 16px 20px;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            font-size: 13px;
+            letter-spacing: 0.3px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .files-table td {
+            padding: 16px 20px;
+            border-bottom: 1px solid #e5e7eb;
+            color: #1f2937;
+        }
+        
+        .files-table tr:hover td {
+            background: #f9fafb;
+        }
+        
+        .view-btn {
+            background: none;
+            border: none;
+            color: #3b82f6;
+            cursor: pointer;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .view-btn:hover {
+            background: #dbeafe;
+        }
+        
+        .matched-badge {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            display: inline-block;
         }
         
         /* FOLDERS LIST */
@@ -732,57 +889,6 @@ HTML = """
         .delete-btn:hover {
             color: #dc2626;
             background: #fee2e2;
-        }
-        
-        .view-btn {
-            background: none;
-            border: none;
-            color: #3b82f6;
-            cursor: pointer;
-            padding: 6px 10px;
-            border-radius: 6px;
-        }
-        
-        .view-btn:hover {
-            background: #dbeafe;
-        }
-        
-        .matched-badge {
-            background: #fee2e2;
-            color: #991b1b;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-            display: inline-block;
-        }
-        
-        /* FILES TABLE */
-        .files-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        
-        .files-table th {
-            background: #f9fafb;
-            padding: 14px 20px;
-            text-align: left;
-            font-weight: 600;
-            color: #374151;
-            font-size: 13px;
-            letter-spacing: 0.3px;
-            border-bottom: 1px solid #e5e7eb;
-        }
-        
-        .files-table td {
-            padding: 14px 20px;
-            border-bottom: 1px solid #e5e7eb;
-            color: #1f2937;
-        }
-        
-        .files-table tr:hover td {
-            background: #f9fafb;
         }
         
         /* MODAL */
@@ -947,10 +1053,6 @@ HTML = """
             border: 1px solid #fecaca;
         }
         
-        .flash-message i {
-            font-size: 18px;
-        }
-        
         /* Loading */
         .loading {
             display: none;
@@ -1017,11 +1119,11 @@ HTML = """
                     <i class="fas fa-ban"></i>
                     Blacklist
                 </div>
-                <div class="nav-item" onclick="showPage('clean')">
+                <div class="nav-item" onclick="window.location.href='/clean'">
                     <i class="fas fa-check-circle"></i>
                     Clean CVs
                 </div>
-                <div class="nav-item" onclick="showPage('blacklisted-files')">
+                <div class="nav-item" onclick="window.location.href='/blacklisted-files'">
                     <i class="fas fa-exclamation-triangle"></i>
                     Blacklisted CVs
                 </div>
@@ -1056,23 +1158,23 @@ HTML = """
                     
                     <div class="stat-card green">
                         <div class="stat-header">
-                            <span class="stat-label">Clean CVs</span>
+                            <span class="stat-label">Clean CV Files</span>
                         </div>
-                        <div class="stat-number">{{ clean_count }}</div>
+                        <div class="stat-number">{{ clean_files_count }}</div>
                     </div>
                     
                     <div class="stat-card orange">
                         <div class="stat-header">
-                            <span class="stat-label">Blacklisted CVs</span>
+                            <span class="stat-label">Blacklisted Files</span>
                         </div>
-                        <div class="stat-number">{{ blacklisted_count }}</div>
+                        <div class="stat-number">{{ blacklisted_files_count }}</div>
                     </div>
                 </div>
                 
                 <div class="folders-section">
                     <h3>Quick Access Folders</h3>
                     
-                    <div class="folder-item" onclick="showPage('clean')">
+                    <div class="folder-item" onclick="window.location.href='/clean'">
                         <div class="folder-icon">
                             <i class="fas fa-folder-open"></i>
                         </div>
@@ -1082,7 +1184,7 @@ HTML = """
                         </div>
                     </div>
                     
-                    <div class="folder-item" onclick="showPage('blacklisted-files')">
+                    <div class="folder-item" onclick="window.location.href='/blacklisted-files'">
                         <div class="folder-icon">
                             <i class="fas fa-folder-open"></i>
                         </div>
@@ -1134,12 +1236,17 @@ HTML = """
             <!-- Scan Page -->
             <div id="page-scan" class="page">
                 <div class="upload-section">
-                    <h3>📁 Upload CV Folder</h3>
+                    <h3><i class="fas fa-cloud-upload-alt" style="color: #ef4444;"></i> Upload CV Folder</h3>
                     
                     <form method="POST" action="/scan" enctype="multipart/form-data" id="scanForm">
                         <div class="folder-name-input">
-                            <label><i class="fas fa-folder-plus" style="color: #ef4444; margin-right: 6px;"></i> Folder Name (e.g., Operations, Accounts, Marketing)</label>
-                            <input type="text" name="folder_name" id="folderName" placeholder="Enter folder name..." required>
+                            <label><i class="fas fa-folder-plus"></i> Folder Name (e.g., Operations, Accounts, Marketing)</label>
+                            <div class="folder-input-group">
+                                <input type="text" name="folder_name" id="folderName" placeholder="Enter folder name..." required>
+                                <button type="button" class="save-folder-btn" onclick="document.getElementById('folderInput').click()">
+                                    <i class="fas fa-save"></i> Save & Upload
+                                </button>
+                            </div>
                         </div>
                         
                         <div class="upload-area" onclick="document.getElementById('folderInput').click()">
@@ -1151,7 +1258,7 @@ HTML = """
                         <input type="file" name="folder" id="folderInput" webkitdirectory directory multiple style="display: none;" required>
                         
                         <button type="submit" class="scan-btn" onclick="return validateAndShowLoading()">
-                            <i class="fas fa-search"></i> Start Scan
+                            <i class="fas fa-search"></i> Start Scanning
                         </button>
                     </form>
                     
@@ -1244,116 +1351,120 @@ HTML = """
             
             <!-- Clean CVs Page -->
             <div id="page-clean" class="page">
-                <div class="folders-section">
-                    <div class="folder-header">
-                        <h3><i class="fas fa-check-circle" style="color: #16a34a;"></i> Clean CV Folders</h3>
+                <div class="folder-header">
+                    <h3><i class="fas fa-check-circle" style="color: #16a34a;"></i> Clean CV Folders</h3>
+                </div>
+                
+                {% if current_clean_folder %}
+                    <div style="margin-bottom: 20px;">
+                        <button class="back-btn" onclick="window.location.href='/clean'">
+                            <i class="fas fa-arrow-left"></i> Back to Folders
+                        </button>
                     </div>
                     
-                    {% if current_clean_folder %}
-                        <div style="margin-bottom: 20px;">
-                            <button class="back-btn" onclick="window.location.href='/clean'">
-                                <i class="fas fa-arrow-left"></i> Back to Folders
-                            </button>
-                            <h4 style="margin-top: 16px; font-size: 16px;">{{ current_clean_folder }}</h4>
+                    <div class="files-section">
+                        <div class="files-header">
+                            <h4><i class="fas fa-folder-open" style="color: #16a34a;"></i> {{ current_clean_folder }}</h4>
+                            <span>{{ current_clean_files|length }} files</span>
                         </div>
-                        <div class="table-container">
-                            <table class="files-table">
-                                <thead>
-                                    <tr>
-                                        <th>Filename</th>
-                                        <th>Size</th>
-                                        <th>Date</th>
-                                        <th></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for file in current_clean_files %}
-                                    <tr>
-                                        <td>{{ file.name }}</td>
-                                        <td>{{ file.size }}</td>
-                                        <td>{{ file.date }}</td>
-                                        <td>
-                                            <a href="/files/clean/{{ current_clean_folder }}/{{ file.name }}" target="_blank">
-                                                <button class="view-btn">
-                                                    <i class="fas fa-eye"></i>
-                                                </button>
-                                            </a>
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
+                        <table class="files-table">
+                            <thead>
+                                <tr>
+                                    <th>Filename</th>
+                                    <th>Size</th>
+                                    <th>Date</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for file in current_clean_files %}
+                                <tr>
+                                    <td>{{ file.name }}</td>
+                                    <td>{{ file.size }}</td>
+                                    <td>{{ file.date }}</td>
+                                    <td>
+                                        <a href="/files/clean/{{ current_clean_folder }}/{{ file.name }}" target="_blank">
+                                            <button class="view-btn">
+                                                <i class="fas fa-eye"></i> View
+                                            </button>
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="folders-grid">
+                        {% for folder in clean_folders %}
+                        <div class="folder-card clean" onclick="window.location.href='/clean?folder={{ folder.name }}'">
+                            <i class="fas fa-folder"></i>
+                            <h4>{{ folder.name }}</h4>
+                            <p>{{ folder.count }} files</p>
                         </div>
-                    {% else %}
-                        <div class="folders-grid">
-                            {% for folder in clean_folders %}
-                            <div class="folder-card clean" onclick="window.location.href='/clean?folder={{ folder.name }}'">
-                                <i class="fas fa-folder"></i>
-                                <h4>{{ folder.name }}</h4>
-                                <p>{{ folder.count }} files</p>
-                            </div>
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-                </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
             </div>
             
             <!-- Blacklisted Files Page -->
             <div id="page-blacklisted-files" class="page">
-                <div class="folders-section">
-                    <div class="folder-header">
-                        <h3><i class="fas fa-exclamation-triangle" style="color: #dc2626;"></i> Blacklisted CV Folders</h3>
+                <div class="folder-header">
+                    <h3><i class="fas fa-exclamation-triangle" style="color: #dc2626;"></i> Blacklisted CV Folders</h3>
+                </div>
+                
+                {% if current_blacklisted_folder %}
+                    <div style="margin-bottom: 20px;">
+                        <button class="back-btn" onclick="window.location.href='/blacklisted-files'">
+                            <i class="fas fa-arrow-left"></i> Back to Folders
+                        </button>
                     </div>
                     
-                    {% if current_blacklisted_folder %}
-                        <div style="margin-bottom: 20px;">
-                            <button class="back-btn" onclick="window.location.href='/blacklisted-files'">
-                                <i class="fas fa-arrow-left"></i> Back to Folders
-                            </button>
-                            <h4 style="margin-top: 16px; font-size: 16px;">{{ current_blacklisted_folder }}</h4>
+                    <div class="files-section">
+                        <div class="files-header">
+                            <h4><i class="fas fa-folder-open" style="color: #dc2626;"></i> {{ current_blacklisted_folder }}</h4>
+                            <span>{{ current_blacklisted_files|length }} files</span>
                         </div>
-                        <div class="table-container">
-                            <table class="files-table">
-                                <thead>
-                                    <tr>
-                                        <th>Filename</th>
-                                        <th>Size</th>
-                                        <th>Matched Name</th>
-                                        <th>Date</th>
-                                        <th></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for file in current_blacklisted_files %}
-                                    <tr>
-                                        <td>{{ file.name }}</td>
-                                        <td>{{ file.size }}</td>
-                                        <td><span class="matched-badge">{{ file.matched_name }}</span></td>
-                                        <td>{{ file.date }}</td>
-                                        <td>
-                                            <a href="/files/blacklisted/{{ current_blacklisted_folder }}/{{ file.name }}" target="_blank">
-                                                <button class="view-btn">
-                                                    <i class="fas fa-eye"></i>
-                                                </button>
-                                            </a>
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
+                        <table class="files-table">
+                            <thead>
+                                <tr>
+                                    <th>Filename</th>
+                                    <th>Size</th>
+                                    <th>Matched Name</th>
+                                    <th>Date</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for file in current_blacklisted_files %}
+                                <tr>
+                                    <td>{{ file.name }}</td>
+                                    <td>{{ file.size }}</td>
+                                    <td><span class="matched-badge">{{ file.matched_name }}</span></td>
+                                    <td>{{ file.date }}</td>
+                                    <td>
+                                        <a href="/files/blacklisted/{{ current_blacklisted_folder }}/{{ file.name }}" target="_blank">
+                                            <button class="view-btn">
+                                                <i class="fas fa-eye"></i> View
+                                            </button>
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="folders-grid">
+                        {% for folder in blacklisted_folders %}
+                        <div class="folder-card blacklisted" onclick="window.location.href='/blacklisted-files?folder={{ folder.name }}'">
+                            <i class="fas fa-folder"></i>
+                            <h4>{{ folder.name }}</h4>
+                            <p>{{ folder.count }} files</p>
                         </div>
-                    {% else %}
-                        <div class="folders-grid">
-                            {% for folder in blacklisted_folders %}
-                            <div class="folder-card blacklisted" onclick="window.location.href='/blacklisted-files?folder={{ folder.name }}'">
-                                <i class="fas fa-folder"></i>
-                                <h4>{{ folder.name }}</h4>
-                                <p>{{ folder.count }} files</p>
-                            </div>
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-                </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -1512,16 +1623,6 @@ HTML = """
                 event.target.style.display = 'none';
             }
         }
-        
-        document.getElementById('folderInput').addEventListener('change', function() {
-            var folderName = document.getElementById('folderName').value;
-            if (this.files.length > 0 && folderName) {
-                document.getElementById('scanForm').submit();
-            } else if (!folderName) {
-                alert('Please enter a folder name first');
-                this.value = '';
-            }
-        });
     </script>
 </body>
 </html>
@@ -1539,47 +1640,33 @@ def home():
     
     # Get folder stats
     clean_folders, blacklisted_folders = get_folder_structure()
-    clean_count = len(clean_folders)
-    blacklisted_count = len(blacklisted_folders)
+    clean_files_count, blacklisted_files_count = get_file_count()
     
     conn.close()
     
-    # Get clean files list (for backward compatibility)
-    clean_files = []
-    if os.path.exists(CLEAN_FOLDER):
-        for f in os.listdir(CLEAN_FOLDER):
-            filepath = os.path.join(CLEAN_FOLDER, f)
-            if os.path.isfile(filepath):
-                size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
-                mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
-                clean_files.append({'name': f, 'size': size, 'date': mtime})
-    
-    # Get blacklisted files list (for backward compatibility)
-    blacklisted_files = []
-    if os.path.exists(BLACKLISTED_FOLDER):
-        for f in os.listdir(BLACKLISTED_FOLDER):
-            filepath = os.path.join(BLACKLISTED_FOLDER, f)
-            if os.path.isfile(filepath):
-                size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
-                mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
-                blacklisted_files.append({'name': f, 'size': size, 'date': mtime, 'matched_name': 'Unknown'})
+    # Get scan results from query params
+    scan_results = None
+    if request.args.get('scan_results'):
+        scan_results = {
+            'clean': request.args.get('clean', 0),
+            'blacklisted': request.args.get('blacklisted', 0),
+            'found_names': request.args.get('names', '').split(',') if request.args.get('names') else [],
+            'folder_name': request.args.get('folder', '')
+        }
     
     return render_template_string(
         HTML,
         rows=rows,
         total=total,
-        clean_count=clean_count,
-        blacklisted_count=blacklisted_count,
-        scanned_today=clean_count + blacklisted_count,
-        clean_files=clean_files,
-        blacklisted_files=blacklisted_files,
+        clean_files_count=clean_files_count,
+        blacklisted_files_count=blacklisted_files_count,
         clean_folders=clean_folders,
         blacklisted_folders=blacklisted_folders,
         current_clean_folder=None,
         current_clean_files=[],
         current_blacklisted_folder=None,
         current_blacklisted_files=[],
-        scan_results=None
+        scan_results=scan_results
     )
 
 @app.route("/scan", methods=["POST"])
@@ -1615,7 +1702,6 @@ def scan_folder():
     clean_count = 0
     blacklisted_count = 0
     found_names = set()
-    blacklisted_files_info = []
     
     # Process each file
     for file in files:
@@ -1645,10 +1731,6 @@ def scan_folder():
                 shutil.move(temp_path, dest)
                 blacklisted_count += 1
                 found_names.add(matched_name)
-                blacklisted_files_info.append({
-                    'name': os.path.basename(dest),
-                    'matched_name': matched_name
-                })
             else:
                 # Move to clean folder
                 dest = os.path.join(clean_target, os.path.basename(temp_path))
@@ -1657,6 +1739,7 @@ def scan_folder():
     
     flash(f"✅ Scan complete! Clean: {clean_count}, Blacklisted: {blacklisted_count}", "success")
     
+    # Redirect with results
     return redirect(f"/?scan_results=1&clean={clean_count}&blacklisted={blacklisted_count}&folder={folder_name}&names={','.join(found_names)}")
 
 @app.route("/clean")
@@ -1672,28 +1755,7 @@ def view_clean():
     conn.close()
     
     clean_folders, blacklisted_folders = get_folder_structure()
-    clean_count = len(clean_folders)
-    blacklisted_count = len(blacklisted_folders)
-    
-    # Get clean files list (for backward compatibility)
-    clean_files = []
-    if os.path.exists(CLEAN_FOLDER):
-        for f in os.listdir(CLEAN_FOLDER):
-            filepath = os.path.join(CLEAN_FOLDER, f)
-            if os.path.isfile(filepath):
-                size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
-                mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
-                clean_files.append({'name': f, 'size': size, 'date': mtime})
-    
-    # Get blacklisted files list (for backward compatibility)
-    blacklisted_files = []
-    if os.path.exists(BLACKLISTED_FOLDER):
-        for f in os.listdir(BLACKLISTED_FOLDER):
-            filepath = os.path.join(BLACKLISTED_FOLDER, f)
-            if os.path.isfile(filepath):
-                size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
-                mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
-                blacklisted_files.append({'name': f, 'size': size, 'date': mtime, 'matched_name': 'Unknown'})
+    clean_files_count, blacklisted_files_count = get_file_count()
     
     current_clean_files = []
     current_clean_folder = None
@@ -1709,15 +1771,13 @@ def view_clean():
                     mtime = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%m-%d %H:%M')
                     current_clean_files.append({'name': f, 'size': size, 'date': mtime})
     
-    return render_template_string(
+    # Force the clean page to be active
+    html = render_template_string(
         HTML,
         rows=rows,
         total=total,
-        clean_count=clean_count,
-        blacklisted_count=blacklisted_count,
-        scanned_today=clean_count + blacklisted_count,
-        clean_files=clean_files,
-        blacklisted_files=blacklisted_files,
+        clean_files_count=clean_files_count,
+        blacklisted_files_count=blacklisted_files_count,
         clean_folders=clean_folders,
         blacklisted_folders=blacklisted_folders,
         current_clean_folder=current_clean_folder,
@@ -1726,6 +1786,12 @@ def view_clean():
         current_blacklisted_files=[],
         scan_results=None
     )
+    
+    # Add a script to activate the clean page
+    html = html.replace('active-page', '')    # Add a script to activate the clean page
+    html = html.replace('id="page-clean" class="page"', 'id="page-clean" class="page active-page"')
+    
+    return html
 
 @app.route("/blacklisted-files")
 def view_blacklisted():
@@ -1740,28 +1806,7 @@ def view_blacklisted():
     conn.close()
     
     clean_folders, blacklisted_folders = get_folder_structure()
-    clean_count = len(clean_folders)
-    blacklisted_count = len(blacklisted_folders)
-    
-    # Get clean files list (for backward compatibility)
-    clean_files = []
-    if os.path.exists(CLEAN_FOLDER):
-        for f in os.listdir(CLEAN_FOLDER):
-            filepath = os.path.join(CLEAN_FOLDER, f)
-            if os.path.isfile(filepath):
-                size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
-                mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
-                clean_files.append({'name': f, 'size': size, 'date': mtime})
-    
-    # Get blacklisted files list (for backward compatibility)
-    blacklisted_files = []
-    if os.path.exists(BLACKLISTED_FOLDER):
-        for f in os.listdir(BLACKLISTED_FOLDER):
-            filepath = os.path.join(BLACKLISTED_FOLDER, f)
-            if os.path.isfile(filepath):
-                size = f"{os.path.getsize(filepath) / 1024:.1f} KB"
-                mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M')
-                blacklisted_files.append({'name': f, 'size': size, 'date': mtime, 'matched_name': 'Unknown'})
+    clean_files_count, blacklisted_files_count = get_file_count()
     
     current_blacklisted_files = []
     current_blacklisted_folder = None
@@ -1779,18 +1824,16 @@ def view_blacklisted():
                         'name': f, 
                         'size': size, 
                         'date': mtime,
-                        'matched_name': 'Unknown'
+                        'matched_name': 'Unknown'  # You can enhance this later
                     })
     
-    return render_template_string(
+    # Force the blacklisted page to be active
+    html = render_template_string(
         HTML,
         rows=rows,
         total=total,
-        clean_count=clean_count,
-        blacklisted_count=blacklisted_count,
-        scanned_today=clean_count + blacklisted_count,
-        clean_files=clean_files,
-        blacklisted_files=blacklisted_files,
+        clean_files_count=clean_files_count,
+        blacklisted_files_count=blacklisted_files_count,
         clean_folders=clean_folders,
         blacklisted_folders=blacklisted_folders,
         current_clean_folder=None,
@@ -1799,6 +1842,11 @@ def view_blacklisted():
         current_blacklisted_files=current_blacklisted_files,
         scan_results=None
     )
+    
+    # Add a script to activate the blacklisted page
+    html = html.replace('id="page-blacklisted-files" class="page"', 'id="page-blacklisted-files" class="page active-page"')
+    
+    return html
 
 @app.route("/add", methods=["POST"])
 def add():
@@ -1941,10 +1989,10 @@ def view_nested_file(folder_type, filepath):
 
 if __name__ == "__main__":
     print("="*50)
-    print("OTIC CV SCANNER")
+    print("OTIC CV SCANNER - FIXED VERSION")
     print("="*50)
     print("🚀 Server running at: http://127.0.0.1:5000")
-    print("📁 Clean CVs folder: clean_cvs")
-    print("🚫 Blacklisted CVs folder: blacklisted_cvs")
+    print("📁 Clean CVs count: Files in folders")
+    print("🚫 Blacklisted CVs count: Files in folders")
     print("="*50)
     app.run(debug=True, host='0.0.0.0', port=5000)
