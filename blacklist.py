@@ -1,6 +1,6 @@
-from flask import Flask, render_template_string, request, redirect, url_for, flash, send_file
+from flask import Flask, render_template_string, request, redirect, url_for, flash, send_file, jsonify
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 import csv
 import os
 import shutil
@@ -11,6 +11,7 @@ import pandas as pd
 
 app = Flask(__name__)
 app.secret_key = "otic-blacklist-secret"
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
@@ -24,17 +25,60 @@ for folder in [UPLOAD_FOLDER, CLEAN_FOLDER, BLACKLISTED_FOLDER]:
 
 def init_db():
     conn = sqlite3.connect("blacklist.db")
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS blacklist(
+    cursor = conn.cursor()
+    
+    # Check if table exists
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='blacklist'")
+    table_exists = cursor.fetchone()
+    
+    if not table_exists:
+        # Create new table with all columns
+        cursor.execute("""
+        CREATE TABLE blacklist(
+            id INTEGER PRIMARY KEY,
+            name TEXT,
+            phone TEXT,
+            email TEXT,
+            position TEXT,
+            reason TEXT,
+            date_added TEXT,
+            added_by TEXT,
+            notes TEXT,
+            status TEXT DEFAULT 'active'
+        )
+        """)
+        print("✅ Created new blacklist table")
+    else:
+        # Check if email column exists
+        cursor.execute("PRAGMA table_info(blacklist)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        # Add missing columns if they don't exist
+        if 'email' not in columns:
+            cursor.execute("ALTER TABLE blacklist ADD COLUMN email TEXT")
+            print("✅ Added email column")
+        
+        if 'notes' not in columns:
+            cursor.execute("ALTER TABLE blacklist ADD COLUMN notes TEXT")
+            print("✅ Added notes column")
+        
+        if 'status' not in columns:
+            cursor.execute("ALTER TABLE blacklist ADD COLUMN status TEXT DEFAULT 'active'")
+            print("✅ Added status column")
+    
+    # Create scan history table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS scan_history(
         id INTEGER PRIMARY KEY,
-        name TEXT,
-        phone TEXT,
-        position TEXT,
-        reason TEXT,
-        date_added TEXT,
-        added_by TEXT
+        scan_date TEXT,
+        folder_name TEXT,
+        total_files INTEGER,
+        clean_count INTEGER,
+        blacklisted_count INTEGER,
+        found_names TEXT
     )
     """)
+    
     conn.commit()
     conn.close()
     print("✅ Database ready")
@@ -48,7 +92,7 @@ def extract_text_from_pdf(filepath):
         with open(filepath, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
             for page in pdf_reader.pages:
-                text += page.extract_text()
+                text += page.extract_text() or ""
     except Exception as e:
         print(f"Error reading PDF: {e}")
     return text.lower()
@@ -72,7 +116,6 @@ def extract_text_from_txt(filepath):
 
 def search_name_in_file(filepath, blacklisted_names):
     """Search for blacklisted names in file content"""
-    # Extract text based on file type
     ext = os.path.splitext(filepath)[1].lower()
     
     if ext == '.pdf':
@@ -84,9 +127,8 @@ def search_name_in_file(filepath, blacklisted_names):
     else:
         return None
     
-    # Check for each blacklisted name
     for name in blacklisted_names:
-        if name.lower() in text:
+        if name and name.lower() in text:
             return name
     return None
 
@@ -95,12 +137,10 @@ def get_file_count():
     clean_files_count = 0
     blacklisted_files_count = 0
     
-    # Count files in clean_cvs folders
     if os.path.exists(CLEAN_FOLDER):
         for root, dirs, files in os.walk(CLEAN_FOLDER):
             clean_files_count += len(files)
     
-    # Count files in blacklisted_cvs folders
     if os.path.exists(BLACKLISTED_FOLDER):
         for root, dirs, files in os.walk(BLACKLISTED_FOLDER):
             blacklisted_files_count += len(files)
@@ -157,741 +197,512 @@ def get_folder_structure():
 
 HTML = """
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>OTIC CV Scanner</title>
+    <title>OTIC CV Scanner - Blacklist Management System</title>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
-        
+
         body {
-            background: #f3f4f6;
+            font-family: 'Inter', sans-serif;
+            background: #F5F7FA;
+            min-height: 100vh;
+            color: #1E293B;
         }
-        
-        .layout {
+
+        /* Company Colors - Solid */
+        :root {
+            --primary: #02319A;
+            --secondary: #FF0000;
+            --primary-light: #1E4BB3;
+            --primary-dark: #012078;
+            --secondary-light: #FF3333;
+            --secondary-dark: #CC0000;
+            --background: #F5F7FA;
+            --card-bg: #FFFFFF;
+            --text-primary: #1E293B;
+            --text-secondary: #64748B;
+            --border: #E2E8F0;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --info: #3B82F6;
+        }
+
+        /* Main Layout */
+        .app-wrapper {
             display: flex;
             min-height: 100vh;
         }
-        
-        /* SIDEBAR */
+
+        /* Sidebar */
         .sidebar {
-            width: 260px;
-            background: #111827;
+            width: 280px;
+            background: var(--primary-dark);
             color: white;
+            padding: 30px 0;
             position: fixed;
             height: 100vh;
             overflow-y: auto;
+            box-shadow: 4px 0 20px rgba(2, 49, 154, 0.2);
         }
-        
-        .logo-area {
-            padding: 28px 24px;
-            border-bottom: 1px solid #1f2937;
+
+        .sidebar-header {
+            padding: 0 24px 30px 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
         }
-        
-        .logo-area h2 {
-            font-size: 20px;
-            font-weight: 500;
-            letter-spacing: 0.3px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .nav-menu {
-            padding: 24px 16px;
-        }
-        
-        .nav-item {
-            padding: 12px 16px;
-            margin: 4px 0;
-            border-radius: 8px;
-            color: #9ca3af;
-            cursor: pointer;
-            font-size: 15px;
+
+        .logo {
             display: flex;
             align-items: center;
             gap: 12px;
+        }
+
+        .logo-icon {
+            width: 48px;
+            height: 48px;
+            background: white;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            color: var(--primary);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+
+        .logo-text {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            color: white;
+        }
+
+        .nav-menu {
+            padding: 30px 16px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 20px;
+            margin: 4px 0;
+            border-radius: 10px;
+            color: rgba(255,255,255,0.7);
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
             transition: all 0.2s;
         }
-        
+
         .nav-item i {
-            width: 20px;
-            font-size: 16px;
+            width: 22px;
+            font-size: 18px;
         }
-        
+
         .nav-item:hover {
-            background: #1f2937;
+            background: rgba(255,255,255,0.1);
             color: white;
         }
-        
+
         .nav-item.active {
-            background: #ef4444;
-            color: white;
+    background: white;
+    color: var(--primary);
+    box-shadow: 0 4px 10px rgba(255, 255, 255, 0.2);
         }
-        
-        /* MAIN CONTENT */
-        .main {
+
+        /* Main Content */
+        .main-content {
             flex: 1;
-            margin-left: 260px;
-            padding: 32px 48px;
-            max-width: 1400px;
+            margin-left: 280px;
+            padding: 30px;
         }
-        
-        .page {
-            display: none;
-        }
-        
-        .page.active-page {
-            display: block;
-        }
-        
-        /* STATS CARDS */
-        .stats-row {
-            display: flex;
-            gap: 24px;
-            margin-bottom: 32px;
-        }
-        
-        .stat-card {
-            flex: 1;
-            padding: 24px;
+
+        /* Top Bar */
+        .top-bar {
+            background: var(--card-bg);
             border-radius: 12px;
-            color: white;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            transition: transform 0.2s;
+            padding: 20px 30px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            border: 1px solid var(--border);
         }
-        
+
+        .page-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .page-title i {
+            color: var(--secondary);
+            font-size: 28px;
+        }
+
+        .date-badge {
+            background: var(--background);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--primary);
+            border: 1px solid var(--border);
+        }
+
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            border: 1px solid var(--border);
+            transition: all 0.2s;
+        }
+
         .stat-card:hover {
             transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(2, 49, 154, 0.1);
+            border-color: var(--primary);
         }
-        
-        .stat-card.red {
-            background: #dc2626;
-        }
-        
-        .stat-card.green {
-            background: #16a34a;
-        }
-        
-        .stat-card.orange {
-            background: #ea580c;
-        }
-        
+
         .stat-header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
+            align-items: flex-start;
+            margin-bottom: 20px;
         }
-        
-        .stat-label {
-            font-size: 14px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            opacity: 0.9;
-        }
-        
-        .stat-number {
-            font-size: 42px;
-            font-weight: 700;
-        }
-        
-        .add-icon {
-            width: 32px;
-            height: 32px;
-            background: rgba(255,255,255,0.2);
-            border-radius: 8px;
+
+        .stat-icon {
+            width: 56px;
+            height: 56px;
+            background: var(--primary);
+            border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
+            color: white;
+            font-size: 24px;
+        }
+
+        .stat-value {
+            font-size: 42px;
+            font-weight: 700;
+            color: var(--primary);
+            line-height: 1.2;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .action-btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
-        }
-        
-        .add-icon:hover {
-            background: rgba(255,255,255,0.3);
-            transform: scale(1.1);
-        }
-        
-        /* UPLOAD SECTION */
-        .upload-section {
-            background: #ffffff;
-            border-radius: 16px;
-            padding: 32px;
-            margin-bottom: 24px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-            border: 1px solid #e5e7eb;
-        }
-        
-        .upload-section h3 {
-            color: #111827;
-            font-size: 20px;
-            font-weight: 600;
-            margin-bottom: 24px;
-            display: flex;
+            border: none;
+            display: inline-flex;
             align-items: center;
             gap: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
-        
-        .folder-name-input {
-            margin-bottom: 24px;
-            background: #f9fafb;
-            padding: 20px;
+
+        .action-btn.primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .action-btn.primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .action-btn.secondary {
+            background: white;
+            color: var(--primary);
+            border: 2px solid var(--primary);
+        }
+
+        .action-btn.secondary:hover {
+            background: var(--primary);
+            color: white;
+        }
+
+        .action-btn.success {
+            background: var(--success);
+            color: white;
+        }
+
+        .action-btn.success:hover {
+            background: #0EA271;
+        }
+
+        .action-btn.warning {
+            background: var(--warning);
+            color: white;
+        }
+
+        /* Content Cards */
+        .content-card {
+            background: var(--card-bg);
             border-radius: 12px;
-            border: 1px solid #e5e7eb;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            border: 1px solid var(--border);
         }
-        
-        .folder-name-input label {
-            display: block;
-            margin-bottom: 10px;
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .card-title {
+            font-size: 18px;
             font-weight: 600;
-            color: #374151;
-            font-size: 15px;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        
-        .folder-name-input label i {
-            color: #ef4444;
-            margin-right: 8px;
+
+        .card-title i {
+            color: var(--secondary);
+            font-size: 20px;
         }
-        
-        .folder-input-group {
+
+        .card-badge {
+            background: var(--background);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--primary);
+            border: 1px solid var(--border);
+        }
+
+        /* Search Bar */
+        .search-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(2, 49, 154, 0.1);
+        }
+
+        .search-btn {
+            padding: 12px 24px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        /* Upload Area */
+        .upload-area {
+            border: 2px dashed var(--primary);
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            background: rgba(2, 49, 154, 0.02);
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 20px;
+        }
+
+        .upload-area:hover {
+            border-color: var(--secondary);
+            background: rgba(255, 0, 0, 0.02);
+        }
+
+        .upload-area i {
+            font-size: 48px;
+            color: var(--primary);
+            margin-bottom: 15px;
+        }
+
+        .upload-area h3 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 8px;
+        }
+
+        .upload-area p {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        /* Form Styles */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--primary);
+            font-size: 14px;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s;
+            background: white;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--secondary);
+            box-shadow: 0 0 0 3px rgba(255, 0, 0, 0.1);
+        }
+
+        .input-group {
             display: flex;
             gap: 12px;
         }
-        
-        .folder-name-input input {
-            flex: 1;
-            padding: 14px 18px;
-            border: 2px solid #e5e7eb;
-            border-radius: 10px;
-            font-size: 15px;
-            transition: all 0.2s;
-            background: white;
-        }
-        
-        .folder-name-input input:focus {
-            outline: none;
-            border-color: #ef4444;
-            box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
-        }
-        
-        .save-folder-btn {
-            padding: 14px 28px;
-            background: #16a34a;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 15px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .save-folder-btn:hover {
-            background: #15803d;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
-        }
-        
-        .upload-area {
-            border: 2px dashed #d1d5db;
-            border-radius: 12px;
-            padding: 40px;
-            background: #f9fafb;
-            cursor: pointer;
-            transition: all 0.3s;
-            text-align: center;
-        }
-        
-        .upload-area:hover {
-            border-color: #ef4444;
-            background: #fef2f2;
-        }
-        
-        .upload-area i {
-            font-size: 48px;
-            color: #9ca3af;
-            margin-bottom: 16px;
-        }
-        
-        .upload-area p {
-            color: #6b7280;
-            font-size: 14px;
-        }
-        
-        .scan-btn {
-            margin-top: 24px;
-            padding: 16px 32px;
-            background: #ef4444;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            width: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-        }
-        
-        .scan-btn:hover {
-            background: #dc2626;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-        }
-        
-        .scan-btn i {
-            font-size: 18px;
-        }
-        
-        /* SCAN RESULTS */
-        .results-section {
-            background: #ffffff;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 24px;
-            border: 1px solid #e5e7eb;
-        }
-        
-        .results-header {
-            font-size: 20px;
-            font-weight: 700;
-            color: #111827;
-            margin-bottom: 20px;
-        }
-        
-        .results-grid {
-            display: flex;
-            gap: 24px;
-            margin-bottom: 24px;
-        }
-        
-        .result-card {
-            flex: 1;
-            padding: 24px;
-            border-radius: 12px;
-            text-align: center;
-        }
-        
-        .result-card.clean {
-            background: #f0fdf4;
-            border: 1px solid #bbf7d0;
-        }
-        
-        .result-card.blacklisted {
-            background: #fef2f2;
-            border: 1px solid #fecaca;
-        }
-        
-        .result-number {
-            font-size: 48px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        
-        .result-card.clean .result-number {
-            color: #16a34a;
-        }
-        
-        .result-card.blacklisted .result-number {
-            color: #dc2626;
-        }
-        
-        .result-label {
-            font-size: 16px;
-            font-weight: 500;
-        }
-        
-        .blacklisted-names {
-            margin-top: 20px;
-            padding: 20px;
-            background: #fef2f2;
-            border-radius: 8px;
-        }
-        
-        .blacklisted-names h4 {
-            color: #991b1b;
-            margin-bottom: 16px;
-            font-size: 16px;
-        }
-        
-        .name-tag {
-            display: inline-block;
-            background: white;
-            padding: 8px 16px;
-            border-radius: 20px;
-            margin: 4px;
-            border: 1px solid #fecaca;
-            color: #991b1b;
-            font-size: 14px;
-            font-weight: 500;
-        }
-        
-        .folder-actions {
-            display: flex;
-            gap: 16px;
-            margin-top: 20px;
-        }
-        
-        .folder-btn {
-            flex: 1;
-            padding: 16px;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            background: white;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-align: center;
-        }
-        
-        .folder-btn:hover {
-            background: #f9fafb;
-            border-color: #ef4444;
-        }
-        
-        .folder-btn i {
-            font-size: 24px;
-            color: #6b7280;
-            margin-bottom: 8px;
-        }
-        
-        /* FOLDERS GRID */
-        .folders-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-        }
-        
-        .folder-card {
-            background: white;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 24px;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-align: center;
-        }
-        
-        .folder-card:hover {
-            border-color: #ef4444;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
-            transform: translateY(-2px);
-        }
-        
-        .folder-card.clean:hover {
-            border-color: #16a34a;
-        }
-        
-        .folder-card.blacklisted:hover {
-            border-color: #dc2626;
-        }
-        
-        .folder-card i {
-            font-size: 48px;
-            color: #6b7280;
-            margin-bottom: 16px;
-        }
-        
-        .folder-card.clean i {
-            color: #16a34a;
-        }
-        
-        .folder-card.blacklisted i {
-            color: #dc2626;
-        }
-        
-        .folder-card h4 {
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #111827;
-        }
-        
-        .folder-card p {
-            color: #6b7280;
-            font-size: 14px;
-        }
-        
-        .folder-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 24px;
-        }
-        
-        .folder-header h3 {
-            font-size: 20px;
-            font-weight: 600;
-            color: #111827;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .back-btn {
-            padding: 10px 20px;
-            background: white;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            transition: all 0.2s;
-        }
-        
-        .back-btn:hover {
-            background: #f9fafb;
-            border-color: #d1d5db;
-        }
-        
-        .back-btn i {
-            font-size: 14px;
-        }
-        
-        /* FILES TABLE */
-        .files-section {
-            background: white;
-            border-radius: 12px;
-            border: 1px solid #e5e7eb;
-            overflow: hidden;
-        }
-        
-        .files-header {
-            padding: 20px 24px;
-            border-bottom: 1px solid #e5e7eb;
-            background: #f9fafb;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .files-header h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #111827;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .files-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        
-        .files-table th {
-            background: #f9fafb;
-            padding: 16px 20px;
-            text-align: left;
-            font-weight: 600;
-            color: #374151;
-            font-size: 13px;
-            letter-spacing: 0.3px;
-            border-bottom: 1px solid #e5e7eb;
-        }
-        
-        .files-table td {
-            padding: 16px 20px;
-            border-bottom: 1px solid #e5e7eb;
-            color: #1f2937;
-        }
-        
-        .files-table tr:hover td {
-            background: #f9fafb;
-        }
-        
-        .view-btn {
-            background: none;
-            border: none;
-            color: #3b82f6;
-            cursor: pointer;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 14px;
-        }
-        
-        .view-btn:hover {
-            background: #dbeafe;
-        }
-        
-        .matched-badge {
-            background: #fee2e2;
-            color: #991b1b;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 500;
-            display: inline-block;
-        }
-        
-        /* FOLDERS LIST */
-        .folders-section {
-            background: #ffffff;
-            border-radius: 12px;
-            padding: 24px;
-            border: 1px solid #e5e7eb;
-            margin-bottom: 24px;
-        }
-        
-        .folders-section h3 {
-            color: #111827;
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 16px;
-        }
-        
-        .folder-item {
-            display: flex;
-            align-items: center;
-            padding: 16px;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            margin-bottom: 12px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .folder-item:hover {
-            background: #f9fafb;
-            border-color: #ef4444;
-        }
-        
-        .folder-item:last-child {
-            margin-bottom: 0;
-        }
-        
-        .folder-icon {
-            width: 48px;
-            height: 48px;
-            background: #f3f4f6;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 16px;
-        }
-        
-        .folder-icon i {
-            font-size: 24px;
-            color: #ef4444;
-        }
-        
-        .folder-info {
-            flex: 1;
-        }
-        
-        .folder-name {
-            font-weight: 600;
-            color: #111827;
-            font-size: 16px;
-            margin-bottom: 4px;
-        }
-        
-        .folder-count {
-            color: #6b7280;
-            font-size: 13px;
-        }
-        
-        /* TABLE */
+
+        /* Tables */
         .table-container {
             background: white;
             border-radius: 12px;
-            border: 1px solid #e5e7eb;
             overflow: hidden;
-            margin-top: 24px;
+            border: 1px solid var(--border);
         }
-        
+
         .table-header {
-            padding: 16px 20px;
-            border-bottom: 1px solid #e5e7eb;
-            background: #f9fafb;
+            padding: 20px 25px;
+            background: var(--background);
+            border-bottom: 2px solid var(--border);
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
-        
-        .table-header h4 {
-            font-size: 15px;
-            font-weight: 600;
-            color: #111827;
-        }
-        
-        .table-header span {
-            color: #6b7280;
-            font-size: 13px;
-            background: #f3f4f6;
-            padding: 4px 10px;
-            border-radius: 16px;
-        }
-        
+
         .table-wrapper {
-            max-height: 400px;
+            overflow-x: auto;
+            max-height: 500px;
             overflow-y: auto;
         }
-        
+
         table {
             width: 100%;
             border-collapse: collapse;
             font-size: 14px;
         }
-        
+
         th {
-            background: #f9fafb;
-            padding: 14px 16px;
+            background: var(--background);
+            padding: 16px 20px;
             text-align: left;
             font-weight: 600;
-            color: #374151;
+            color: var(--primary);
             font-size: 13px;
             letter-spacing: 0.3px;
-            border-bottom: 1px solid #e5e7eb;
+            text-transform: uppercase;
+            border-bottom: 2px solid var(--border);
             position: sticky;
             top: 0;
             z-index: 10;
         }
-        
+
         td {
-            padding: 14px 16px;
-            border-bottom: 1px solid #e5e7eb;
-            color: #1f2937;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-primary);
         }
-        
+
         tr:hover td {
-            background: #f9fafb;
+            background: var(--background);
         }
-        
-        .delete-btn {
-            background: none;
-            border: none;
-            color: #9ca3af;
-            cursor: pointer;
-            padding: 6px 10px;
-            border-radius: 6px;
-            transition: all 0.2s;
+
+        /* Badges */
+        .badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
         }
-        
-        .delete-btn:hover {
-            color: #dc2626;
-            background: #fee2e2;
+
+        .badge-primary {
+            background: rgba(2, 49, 154, 0.1);
+            color: var(--primary);
         }
-        
-        /* MODAL */
+
+        .badge-danger {
+            background: rgba(255, 0, 0, 0.1);
+            color: var(--secondary);
+        }
+
+        .badge-success {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        /* Modal */
         .modal {
             display: none;
             position: fixed;
@@ -903,219 +714,231 @@ HTML = """
             z-index: 1000;
             align-items: center;
             justify-content: center;
-            backdrop-filter: blur(4px);
         }
-        
+
         .modal-content {
             background: white;
-            width: 520px;
-            border-radius: 16px;
-            padding: 32px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-            animation: slideIn 0.3s ease;
+            width: 500px;
+            max-width: 90%;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(2, 49, 154, 0.2);
+            animation: slideUp 0.3s ease;
+            border: 1px solid var(--border);
         }
-        
-        @keyframes slideIn {
+
+        @keyframes slideUp {
             from {
                 opacity: 0;
-                transform: translateY(-20px);
+                transform: translateY(20px);
             }
             to {
                 opacity: 1;
                 transform: translateY(0);
             }
         }
-        
+
         .modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 24px;
+            margin-bottom: 25px;
         }
-        
+
         .modal-header h3 {
-            font-size: 22px;
+            font-size: 20px;
             font-weight: 700;
-            color: #111827;
+            color: var(--primary);
             display: flex;
             align-items: center;
             gap: 10px;
         }
-        
+
         .modal-header h3 i {
-            color: #ef4444;
-            font-size: 24px;
+            color: var(--secondary);
         }
-        
+
         .close-modal {
             background: none;
             border: none;
             font-size: 24px;
             cursor: pointer;
-            color: #9ca3af;
-            transition: color 0.2s;
-        }
-        
-        .close-modal:hover {
-            color: #ef4444;
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
-            color: #374151;
-            font-size: 14px;
-        }
-        
-        .form-group input,
-        .form-group select {
-            width: 100%;
-            padding: 12px 16px;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
-            font-size: 14px;
+            color: var(--text-secondary);
             transition: all 0.2s;
-            background: #f9fafb;
         }
-        
-        .form-group input:focus,
-        .form-group select:focus {
-            outline: none;
-            border-color: #ef4444;
-            background: white;
-            box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.1);
+
+        .close-modal:hover {
+            color: var(--secondary);
         }
-        
-        .modal-actions {
+
+        .modal-footer {
             display: flex;
-            gap: 12px;
-            margin-top: 32px;
+            gap: 15px;
+            margin-top: 30px;
         }
-        
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            font-size: 15px;
-            font-weight: 600;
+
+        /* Folder Grid */
+        .folders-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .folder-card {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
             cursor: pointer;
             transition: all 0.2s;
-            flex: 1;
+            position: relative;
         }
-        
-        .btn-primary {
-            background: #16a34a;
+
+        .folder-card:hover {
+            border-color: var(--primary);
+            box-shadow: 0 4px 12px rgba(2, 49, 154, 0.1);
+        }
+
+        .folder-card i {
+            font-size: 40px;
+            color: var(--primary);
+            margin-bottom: 12px;
+        }
+
+        .folder-card h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 8px;
+        }
+
+        .folder-card p {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .folder-count {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: var(--primary);
             color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
         }
-        
-        .btn-primary:hover {
-            background: #15803d;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
-        }
-        
-        .btn-outline {
+
+        /* Back Button */
+        .back-btn {
+            padding: 8px 16px;
             background: white;
-            border: 2px solid #e5e7eb;
-            color: #374151;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+            margin-bottom: 20px;
+            color: var(--primary);
         }
-        
-        .btn-outline:hover {
-            background: #f9fafb;
-            border-color: #d1d5db;
+
+        .back-btn:hover {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
         }
-        
-        /* FLASH MESSAGES */
+
+        /* Flash Messages */
         .flash-message {
             padding: 14px 18px;
-            margin-bottom: 24px;
             border-radius: 8px;
+            margin-bottom: 20px;
             display: flex;
             align-items: center;
             gap: 10px;
             animation: slideIn 0.3s;
+            border-left: 4px solid;
         }
-        
+
         .flash-success {
-            background: #f0fdf4;
-            color: #166534;
-            border: 1px solid #bbf7d0;
+            background: rgba(16, 185, 129, 0.1);
+            color: #065f46;
+            border-left-color: var(--success);
         }
-        
+
         .flash-error {
-            background: #fef2f2;
-            color: #991b1b;
-            border: 1px solid #fecaca;
+            background: rgba(255, 0, 0, 0.1);
+            color: var(--secondary-dark);
+            border-left-color: var(--secondary);
         }
-        
-        /* Loading */
+
+        /* Loading Spinner */
         .loading {
             display: none;
             text-align: center;
             padding: 40px;
         }
-        
+
         .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #ef4444;
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top: 3px solid var(--secondary);
             border-radius: 50%;
-            width: 50px;
-            height: 50px;
             animation: spin 1s linear infinite;
             margin: 0 auto 20px;
         }
-        
+
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-        
-        /* Scrollbar */
-        .table-wrapper::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        
-        .table-wrapper::-webkit-scrollbar-track {
-            background: #f1f1f1;
-        }
-        
-        .table-wrapper::-webkit-scrollbar-thumb {
-            background: #c1c1c1;
-            border-radius: 4px;
-        }
-        
-        .table-wrapper::-webkit-scrollbar-thumb:hover {
-            background: #a1a1a1;
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                z-index: 100;
+                transition: transform 0.3s;
+            }
+            
+            .sidebar.active {
+                transform: translateX(0);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="layout">
+    <div class="app-wrapper">
         <!-- Sidebar -->
         <div class="sidebar">
-            <div class="logo-area">
-                <h2 style="display: flex; align-items: center; gap: 12px;">
-                    <img src="/static/otic-logo.png" alt="OTIC" style="height: 32px; width: auto;">
-                    <span style="color: white;">OTIC</span>
-                </h2>
+            <div class="sidebar-header">
+    <div class="logo-area">
+            <img src="/static/otic-logo.png" alt="OTIC" style="height: 40px; width: auto; display: block;">
+         </div>
             </div>
             
             <div class="nav-menu">
-                <div class="nav-item active" onclick="showPage('dashboard')">
-                    <i class="fas fa-home"></i>
+                <div class="nav-item active" onclick="showPage('dashboard', this)">
+                    <i class="fas fa-chart-pie"></i>
                     Dashboard
                 </div>
-                <div class="nav-item" onclick="showPage('scan')">
+                <div class="nav-item" onclick="showPage('scan', this)">
                     <i class="fas fa-search"></i>
                     Scan CVs
                 </div>
-                <div class="nav-item" onclick="showPage('blacklist')">
+                <div class="nav-item" onclick="showPage('blacklist', this)">
                     <i class="fas fa-ban"></i>
                     Blacklist
                 </div>
@@ -1131,7 +954,20 @@ HTML = """
         </div>
         
         <!-- Main Content -->
-        <div class="main">
+        <div class="main-content">
+            <!-- Top Bar -->
+            <div class="top-bar">
+                <div class="page-title">
+                    <i class="fas fa-shield-alt"></i>
+                    OTIC CV Screening System
+                </div>
+                <div class="date-badge">
+                    <i class="far fa-calendar"></i>
+                    {{ datetime.now().strftime('%B %d, %Y') }}
+                </div>
+            </div>
+            
+            <!-- Flash Messages -->
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
                     {% for category, message in messages %}
@@ -1145,151 +981,232 @@ HTML = """
             
             <!-- Dashboard Page -->
             <div id="page-dashboard" class="page active-page">
-                <div class="stats-row">
-                    <div class="stat-card red">
+                <!-- Stats Grid -->
+                <div class="stats-grid">
+                    <div class="stat-card">
                         <div class="stat-header">
-                            <span class="stat-label">Blacklisted Names</span>
-                            <div class="add-icon" onclick="showAddModal()">
-                                <i class="fas fa-plus"></i>
+                            <div class="stat-icon">
+                                <i class="fas fa-user-slash"></i>
                             </div>
                         </div>
-                        <div class="stat-number">{{ total }}</div>
+                        <div class="stat-value">{{ total }}</div>
+                        <div class="stat-label">Blacklisted Names</div>
                     </div>
                     
-                    <div class="stat-card green">
+                    <div class="stat-card">
                         <div class="stat-header">
-                            <span class="stat-label">Clean CV Files</span>
+                            <div class="stat-icon">
+                                <i class="fas fa-file-alt"></i>
+                            </div>
                         </div>
-                        <div class="stat-number">{{ clean_files_count }}</div>
+                        <div class="stat-value">{{ clean_files_count }}</div>
+                        <div class="stat-label">Clean CV Files</div>
                     </div>
                     
-                    <div class="stat-card orange">
+                    <div class="stat-card">
                         <div class="stat-header">
-                            <span class="stat-label">Blacklisted Files</span>
+                            <div class="stat-icon">
+                                <i class="fas fa-file-excel"></i>
+                            </div>
                         </div>
-                        <div class="stat-number">{{ blacklisted_files_count }}</div>
+                        <div class="stat-value">{{ blacklisted_files_count }}</div>
+                        <div class="stat-label">Blacklisted Files</div>
                     </div>
                 </div>
                 
-                <div class="folders-section">
-                    <h3>Quick Access Folders</h3>
-                    
-                    <div class="folder-item" onclick="window.location.href='/clean'">
-                        <div class="folder-icon">
-                            <i class="fas fa-folder-open"></i>
+                <!-- Quick Actions -->
+                <div class="quick-actions">
+                    <button class="action-btn primary" onclick="showAddModal()">
+                        <i class="fas fa-plus"></i>
+                        Add to Blacklist
+                    </button>
+                    <button class="action-btn secondary" onclick="showImportModal()">
+                        <i class="fas fa-upload"></i>
+                        Import Data
+                    </button>
+                    <button class="action-btn success" onclick="window.location.href='/export'">
+                        <i class="fas fa-download"></i>
+                        Export CSV
+                    </button>
+                </div>
+                
+                <!-- Search Bar -->
+                <div class="search-bar">
+                    <input type="text" id="searchInput" class="search-input" placeholder="Search blacklist by name, phone, or reason..." onkeyup="searchTable()">
+                    <button class="search-btn" onclick="searchTable()">
+                        <i class="fas fa-search"></i> Search
+                    </button>
+                </div>
+                
+                <!-- Recent Blacklisted Names -->
+                <div class="content-card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i class="fas fa-history"></i>
+                            Recent Blacklisted Names
                         </div>
-                        <div class="folder-info">
-                            <div class="folder-name">Clean CVs</div>
-                            <div class="folder-count">{{ clean_folders|length }} folders</div>
-                        </div>
+                        <div class="card-badge">{{ total }} Total</div>
                     </div>
                     
-                    <div class="folder-item" onclick="window.location.href='/blacklisted-files'">
-                        <div class="folder-icon">
-                            <i class="fas fa-folder-open"></i>
-                        </div>
-                        <div class="folder-info">
-                            <div class="folder-name">Blacklisted CVs</div>
-                            <div class="folder-count">{{ blacklisted_folders|length }} folders</div>
+                    <div class="table-container">
+                        <div class="table-wrapper">
+                            <table id="blacklistTable">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Phone</th>
+                                        <th>Position</th>
+                                        <th>Reason</th>
+                                        <th>Date</th>                                    
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in rows[:10] %}
+    <tr>
+        <td><strong style="color: var(--primary);">{{ row[0] }}</strong></td>
+        <td>{{ row[1] or '-' }}</td>
+        <td>{{ row[3] or '-' }}</td>
+        <td>
+            <span class="badge badge-danger">
+                <i class="fas fa-exclamation"></i>
+                {{ row[4] }}
+            </span>
+        </td>
+        <td>{{ row[5] }}</td>
+        <td>
+            <div style="display: flex; gap: 5px;">
+                <form method="POST" action="/delete/{{ row[9] }}" style="display:inline;" onsubmit="return confirm('Delete this name from blacklist?')">
+                    <button class="action-btn" style="padding: 6px 10px; background: rgba(255,0,0,0.1); color: var(--secondary); border: none; border-radius: 4px;">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </form>
+            </div>
+        </td>
+    </tr>
+    {% endfor %}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
                 
-                <div class="table-container">
-                    <div class="table-header">
-                        <h4>Recent Blacklisted Names</h4>
-                        <span>{{ total }} total</span>
+                <!-- Folders Overview -->
+                <div class="content-card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i class="fas fa-folder"></i>
+                            CV Folders
+                        </div>
                     </div>
-                    <div class="table-wrapper">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Phone</th>
-                                    <th>Reason</th>
-                                    <th>Date</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for row in rows[:5] %}
-                                <tr>
-                                    <td><strong>{{ row[0] }}</strong></td>
-                                    <td>{{ row[1] or '-' }}</td>
-                                    <td>{{ row[3] }}</td>
-                                    <td>{{ row[4] }}</td>
-                                    <td>
-                                        <form method="POST" action="/delete/{{ row[6] }}" style="display:inline;" onsubmit="return confirm('Delete this name?')">
-                                            <button class="delete-btn">
-                                                <i class="fas fa-trash-alt"></i>
-                                            </button>
-                                        </form>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
+                    
+                    <div class="folders-grid">
+                        <div class="folder-card" onclick="window.location.href='/clean'">
+                            <div class="folder-count">{{ clean_folders|length }}</div>
+                            <i class="fas fa-folder-open"></i>
+                            <h4>Clean CVs</h4>
+                            <p>{{ clean_files_count }} files</p>
+                        </div>
+                        
+                        <div class="folder-card" onclick="window.location.href='/blacklisted-files'">
+                            <div class="folder-count">{{ blacklisted_folders|length }}</div>
+                            <i class="fas fa-folder-open" style="color: var(--secondary);"></i>
+                            <h4>Blacklisted CVs</h4>
+                            <p>{{ blacklisted_files_count }} files</p>
+                        </div>
                     </div>
                 </div>
             </div>
             
             <!-- Scan Page -->
             <div id="page-scan" class="page">
-                <div class="upload-section">
-                    <h3><i class="fas fa-cloud-upload-alt" style="color: #ef4444;"></i> Upload CV Folder</h3>
+                <div class="content-card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                            Upload & Scan CV Folder
+                        </div>
+                    </div>
                     
                     <form method="POST" action="/scan" enctype="multipart/form-data" id="scanForm">
-                        <div class="folder-name-input">
-                            <label><i class="fas fa-folder-plus"></i> Folder Name (e.g., Operations, Accounts, Marketing)</label>
-                            <div class="folder-input-group">
-                                <input type="text" name="folder_name" id="folderName" placeholder="Enter folder name..." required>
-                                <button type="button" class="save-folder-btn" onclick="document.getElementById('folderInput').click()">
-                                    <i class="fas fa-save"></i> Save & Upload
-                                </button>
+                        <div class="form-group">
+                            <label class="form-label">
+                                <i class="fas fa-folder"></i>
+                                Folder Name
+                            </label>
+                            <div class="input-group">
+                                <input type="text" name="folder_name" id="folderName" class="form-control" placeholder="e.g., Operations, Accounts, Marketing" required>
                             </div>
                         </div>
                         
                         <div class="upload-area" onclick="document.getElementById('folderInput').click()">
                             <i class="fas fa-cloud-upload-alt"></i>
-                            <p>Click to select folder containing CVs</p>
-                            <p style="font-size: 12px; margin-top: 8px;">Supports: PDF, DOCX, DOC, TXT</p>
+                            <h3>Click to select folder</h3>
+                            <p>Select a folder containing CV files (PDF, DOCX, DOC, TXT)</p>
+                            <p style="font-size: 12px; margin-top: 10px; color: var(--text-secondary);">
+                                <i class="fas fa-info-circle"></i> Max file size: 50MB
+                            </p>
                         </div>
                         
                         <input type="file" name="folder" id="folderInput" webkitdirectory directory multiple style="display: none;" required>
                         
-                        <button type="submit" class="scan-btn" onclick="return validateAndShowLoading()">
-                            <i class="fas fa-search"></i> Start Scanning
+                        <button type="submit" class="action-btn primary" style="width: 100%; justify-content: center; margin-top: 20px;" onclick="return validateAndShowLoading()">
+                            <i class="fas fa-search"></i>
+                            Start Scanning
                         </button>
                     </form>
                     
                     <div id="loading" class="loading">
                         <div class="spinner"></div>
-                        <p>Scanning CVs... This may take a few moments.</p>
+                        <p style="color: var(--text-secondary);">Scanning CVs... This may take a moment.</p>
                     </div>
                 </div>
                 
                 {% if scan_results %}
-                <div class="results-section">
-                    <div class="results-header">Scan Complete: {{ scan_results.folder_name }}</div>
+                <div class="content-card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i class="fas fa-chart-bar"></i>
+                            Scan Results: {{ scan_results.folder_name }}
+                        </div>
+                    </div>
                     
-                    <div class="results-grid">
-                        <div class="result-card clean">
-                            <div class="result-number">{{ scan_results.clean }}</div>
-                            <div class="result-label">Clean CVs</div>
+                    <div class="stats-grid" style="margin-bottom: 20px;">
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <div class="stat-icon" style="background: var(--success);">
+                                    <i class="fas fa-check"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value">{{ scan_results.clean }}</div>
+                            <div class="stat-label">Clean CVs</div>
                         </div>
                         
-                        <div class="result-card blacklisted">
-                            <div class="result-number">{{ scan_results.blacklisted }}</div>
-                            <div class="result-label">Blacklisted CVs</div>
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <div class="stat-icon" style="background: var(--secondary);">
+                                    <i class="fas fa-exclamation"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value">{{ scan_results.blacklisted }}</div>
+                            <div class="stat-label">Blacklisted CVs</div>
                         </div>
                     </div>
                     
                     {% if scan_results.found_names %}
-                    <div class="blacklisted-names">
-                        <h4><i class="fas fa-exclamation-triangle"></i> Blacklisted Names Found:</h4>
-                        {% for name in scan_results.found_names %}
-                            <span class="name-tag">{{ name }}</span>
-                        {% endfor %}
+                    <div style="background: rgba(255,0,0,0.05); border-radius: 8px; padding: 20px; border: 1px solid rgba(255,0,0,0.2);">
+                        <h4 style="color: var(--secondary); margin-bottom: 15px; display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            Blacklisted Names Found
+                        </h4>
+                        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                            {% for name in scan_results.found_names %}
+                            <span style="background: white; padding: 6px 12px; border-radius: 4px; border: 1px solid rgba(255,0,0,0.3); color: var(--secondary); font-size: 13px; font-weight: 500;">
+                                <i class="fas fa-user-slash" style="margin-right: 6px;"></i>
+                                {{ name }}
+                            </span>
+                            {% endfor %}
+                        </div>
                     </div>
                     {% endif %}
                 </div>
@@ -1298,173 +1215,232 @@ HTML = """
             
             <!-- Blacklist Management Page -->
             <div id="page-blacklist" class="page">
-                <div style="margin-bottom: 24px; display: flex; gap: 16px;">
-                    <button class="action-btn green" onclick="showAddModal()" style="padding: 12px 24px; background: #16a34a; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">
-                        <i class="fas fa-plus"></i> Add to Blacklist
-                    </button>
-                    <button class="action-btn" onclick="showImportModal()" style="padding: 12px 24px; background: white; border: 2px solid #16a34a; color: #16a34a; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">
-                        <i class="fas fa-upload"></i> Import from File
-                    </button>
-                </div>
-                
-                <div class="table-container">
-                    <div class="table-header">
-                        <h4>All Blacklisted Names</h4>
-                        <span>{{ total }} names</span>
+                <div class="content-card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i class="fas fa-ban"></i>
+                            Blacklist Management
+                        </div>
+                        <div class="card-badge">{{ total }} Names</div>
                     </div>
-                    <div class="table-wrapper" style="max-height: 600px;">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Phone</th>
-                                    <th>Position</th>
-                                    <th>Reason</th>
-                                    <th>Date</th>
-                                    <th>Added By</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for row in rows %}
-                                <tr>
-                                    <td><strong>{{ row[0] }}</strong></td>
-                                    <td>{{ row[1] or '-' }}</td>
-                                    <td>{{ row[2] or '-' }}</td>
-                                    <td>{{ row[3] }}</td>
-                                    <td>{{ row[4] }}</td>
-                                    <td>{{ row[5] or 'Import' }}</td>
-                                    <td>
-                                        <form method="POST" action="/delete/{{ row[6] }}" style="display:inline;" onsubmit="return confirm('Delete this name?')">
-                                            <button class="delete-btn">
-                                                <i class="fas fa-trash-alt"></i>
-                                            </button>
-                                        </form>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
+                    
+                    <div class="quick-actions" style="margin-bottom: 25px;">
+                        <button class="action-btn primary" onclick="showAddModal()">
+                            <i class="fas fa-plus"></i>
+                            Add New
+                        </button>
+                        <button class="action-btn secondary" onclick="showImportModal()">
+                            <i class="fas fa-upload"></i>
+                            Import
+                        </button>
+                        <button class="action-btn success" onclick="window.location.href='/export'">
+                            <i class="fas fa-download"></i>
+                            Export
+                        </button>
+                    </div>
+                    
+                    <div class="search-bar">
+                        <input type="text" id="blacklistSearch" class="search-input" placeholder="Search blacklist..." onkeyup="searchBlacklist()">
+                    </div>
+                    
+                    <div class="table-container">
+                        <div class="table-wrapper" style="max-height: 600px;">
+                            <table id="fullBlacklistTable">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Phone</th>
+                                        <th>Position</th>
+                                        <th>Reason</th>
+                                        <th>Date Added</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in rows %}
+                                    <tr>
+                                        <td><strong style="color: var(--primary);">{{ row[0] }}</strong></td>
+                                        <td>{{ row[1] or '-' }}</td>
+                                        <td>{{ row[3] or '-' }}</td>
+                                        <td>
+                                            <span class="badge badge-danger">
+                                                <i class="fas fa-exclamation"></i>
+                                                {{ row[4] }}
+                                            </span>
+                                        </td>
+                                        <td>{{ row[5] }}</td>
+                                        <td>
+                                            <span class="badge badge-primary">
+                                                <i class="fas fa-circle"></i>
+                                                {{ row[8] }}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div style="display: flex; gap: 5px;">
+                                                <form method="POST" action="/delete/{{ row[9] }}" style="display:inline;" onsubmit="return confirm('Delete this name from blacklist?')">
+                                                    <button class="action-btn" style="padding: 6px 10px; background: rgba(255,0,0,0.1); color: var(--secondary); border: none; border-radius: 4px;">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
             
             <!-- Clean CVs Page -->
             <div id="page-clean" class="page">
-                <div class="folder-header">
-                    <h3><i class="fas fa-check-circle" style="color: #16a34a;"></i> Clean CV Folders</h3>
-                </div>
-                
-                {% if current_clean_folder %}
-                    <div style="margin-bottom: 20px;">
-                        <button class="back-btn" onclick="window.location.href='/clean'">
-                            <i class="fas fa-arrow-left"></i> Back to Folders
-                        </button>
+                <div class="content-card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i class="fas fa-check-circle" style="color: var(--success);"></i>
+                            Clean CV Folders
+                        </div>
                     </div>
                     
-                    <div class="files-section">
-                        <div class="files-header">
-                            <h4><i class="fas fa-folder-open" style="color: #16a34a;"></i> {{ current_clean_folder }}</h4>
-                            <span>{{ current_clean_files|length }} files</span>
+                    {% if current_clean_folder %}
+                        <button class="back-btn" onclick="window.location.href='/clean'">
+                            <i class="fas fa-arrow-left"></i>
+                            Back to Folders
+                        </button>
+                        
+                        <div class="table-container">
+                            <div class="table-header">
+                                <h4 style="display: flex; align-items: center; gap: 8px; color: var(--primary);">
+                                    <i class="fas fa-folder-open" style="color: var(--success);"></i>
+                                    {{ current_clean_folder }}
+                                </h4>
+                                <span class="badge badge-success">{{ current_clean_files|length }} files</span>
+                            </div>
+                            <div class="table-wrapper">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Filename</th>
+                                            <th>Size</th>
+                                            <th>Date Modified</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for file in current_clean_files %}
+                                        <tr>
+                                            <td>
+                                                <i class="fas fa-file-pdf" style="color: var(--secondary); margin-right: 8px;"></i>
+                                                {{ file.name }}
+                                            </td>
+                                            <td>{{ file.size }}</td>
+                                            <td>{{ file.date }}</td>
+                                            <td>
+                                                <a href="/files/clean/{{ current_clean_folder }}/{{ file.name }}" target="_blank">
+                                                    <button class="action-btn" style="padding: 6px 12px; background: rgba(2,49,154,0.1); color: var(--primary); border: none; border-radius: 4px;">
+                                                        <i class="fas fa-eye"></i> View
+                                                    </button>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
-                        <table class="files-table">
-                            <thead>
-                                <tr>
-                                    <th>Filename</th>
-                                    <th>Size</th>
-                                    <th>Date</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for file in current_clean_files %}
-                                <tr>
-                                    <td>{{ file.name }}</td>
-                                    <td>{{ file.size }}</td>
-                                    <td>{{ file.date }}</td>
-                                    <td>
-                                        <a href="/files/clean/{{ current_clean_folder }}/{{ file.name }}" target="_blank">
-                                            <button class="view-btn">
-                                                <i class="fas fa-eye"></i> View
-                                            </button>
-                                        </a>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                {% else %}
-                    <div class="folders-grid">
-                        {% for folder in clean_folders %}
-                        <div class="folder-card clean" onclick="window.location.href='/clean?folder={{ folder.name }}'">
-                            <i class="fas fa-folder"></i>
-                            <h4>{{ folder.name }}</h4>
-                            <p>{{ folder.count }} files</p>
+                    {% else %}
+                        <div class="folders-grid">
+                            {% for folder in clean_folders %}
+                            <div class="folder-card" onclick="window.location.href='/clean?folder={{ folder.name }}'">
+                                <div class="folder-count">{{ folder.count }}</div>
+                                <i class="fas fa-folder"></i>
+                                <h4>{{ folder.name }}</h4>
+                                <p>{{ folder.count }} files</p>
+                            </div>
+                            {% endfor %}
                         </div>
-                        {% endfor %}
-                    </div>
-                {% endif %}
+                    {% endif %}
+                </div>
             </div>
             
             <!-- Blacklisted Files Page -->
             <div id="page-blacklisted-files" class="page">
-                <div class="folder-header">
-                    <h3><i class="fas fa-exclamation-triangle" style="color: #dc2626;"></i> Blacklisted CV Folders</h3>
-                </div>
-                
-                {% if current_blacklisted_folder %}
-                    <div style="margin-bottom: 20px;">
-                        <button class="back-btn" onclick="window.location.href='/blacklisted-files'">
-                            <i class="fas fa-arrow-left"></i> Back to Folders
-                        </button>
+                <div class="content-card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i class="fas fa-exclamation-triangle" style="color: var(--secondary);"></i>
+                            Blacklisted CV Folders
+                        </div>
                     </div>
                     
-                    <div class="files-section">
-                        <div class="files-header">
-                            <h4><i class="fas fa-folder-open" style="color: #dc2626;"></i> {{ current_blacklisted_folder }}</h4>
-                            <span>{{ current_blacklisted_files|length }} files</span>
+                    {% if current_blacklisted_folder %}
+                        <button class="back-btn" onclick="window.location.href='/blacklisted-files'">
+                            <i class="fas fa-arrow-left"></i>
+                            Back to Folders
+                        </button>
+                        
+                        <div class="table-container">
+                            <div class="table-header">
+                                <h4 style="display: flex; align-items: center; gap: 8px; color: var(--primary);">
+                                    <i class="fas fa-folder-open" style="color: var(--secondary);"></i>
+                                    {{ current_blacklisted_folder }}
+                                </h4>
+                                <span class="badge badge-danger">{{ current_blacklisted_files|length }} files</span>
+                            </div>
+                            <div class="table-wrapper">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Filename</th>
+                                            <th>Size</th>
+                                            <th>Matched Name</th>
+                                            <th>Date Modified</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for file in current_blacklisted_files %}
+                                        <tr>
+                                            <td>
+                                                <i class="fas fa-file-pdf" style="color: var(--secondary); margin-right: 8px;"></i>
+                                                {{ file.name }}
+                                            </td>
+                                            <td>{{ file.size }}</td>
+                                            <td>
+                                                <span class="badge badge-danger">
+                                                    <i class="fas fa-user-slash"></i>
+                                                    {{ file.matched_name }}
+                                                </span>
+                                            </td>
+                                            <td>{{ file.date }}</td>
+                                            <td>
+                                                <a href="/files/blacklisted/{{ current_blacklisted_folder }}/{{ file.name }}" target="_blank">
+                                                    <button class="action-btn" style="padding: 6px 12px; background: rgba(255,0,0,0.1); color: var(--secondary); border: none; border-radius: 4px;">
+                                                        <i class="fas fa-eye"></i> View
+                                                    </button>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
-                        <table class="files-table">
-                            <thead>
-                                <tr>
-                                    <th>Filename</th>
-                                    <th>Size</th>
-                                    <th>Matched Name</th>
-                                    <th>Date</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for file in current_blacklisted_files %}
-                                <tr>
-                                    <td>{{ file.name }}</td>
-                                    <td>{{ file.size }}</td>
-                                    <td><span class="matched-badge">{{ file.matched_name }}</span></td>
-                                    <td>{{ file.date }}</td>
-                                    <td>
-                                        <a href="/files/blacklisted/{{ current_blacklisted_folder }}/{{ file.name }}" target="_blank">
-                                            <button class="view-btn">
-                                                <i class="fas fa-eye"></i> View
-                                            </button>
-                                        </a>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                {% else %}
-                    <div class="folders-grid">
-                        {% for folder in blacklisted_folders %}
-                        <div class="folder-card blacklisted" onclick="window.location.href='/blacklisted-files?folder={{ folder.name }}'">
-                            <i class="fas fa-folder"></i>
-                            <h4>{{ folder.name }}</h4>
-                            <p>{{ folder.count }} files</p>
+                    {% else %}
+                        <div class="folders-grid">
+                            {% for folder in blacklisted_folders %}
+                            <div class="folder-card" onclick="window.location.href='/blacklisted-files?folder={{ folder.name }}'">
+                                <div class="folder-count">{{ folder.count }}</div>
+                                <i class="fas fa-folder" style="color: var(--secondary);"></i>
+                                <h4>{{ folder.name }}</h4>
+                                <p>{{ folder.count }} files</p>
+                            </div>
+                            {% endfor %}
                         </div>
-                        {% endfor %}
-                    </div>
-                {% endif %}
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>
@@ -1482,23 +1458,23 @@ HTML = """
             
             <form method="POST" action="/add">
                 <div class="form-group">
-                    <label>Full Name <span style="color: #ef4444;">*</span></label>
-                    <input type="text" name="name" placeholder="e.g., John Doe" required>
+                    <label class="form-label">Full Name <span style="color: var(--secondary);">*</span></label>
+                    <input type="text" name="name" class="form-control" placeholder="Enter full name" required>
                 </div>
                 
                 <div class="form-group">
-                    <label>Phone Number</label>
-                    <input type="text" name="phone" placeholder="e.g., 08012345678">
+                    <label class="form-label">Phone Number</label>
+                    <input type="text" name="phone" class="form-control" placeholder="Enter phone number">
                 </div>
                 
                 <div class="form-group">
-                    <label>Position</label>
-                    <input type="text" name="position" placeholder="e.g., Software Developer">
+                    <label class="form-label">Position Applied For</label>
+                    <input type="text" name="position" class="form-control" placeholder="Enter position">
                 </div>
                 
                 <div class="form-group">
-                    <label>Reason <span style="color: #ef4444;">*</span></label>
-                    <select name="reason" id="reasonSelect" onchange="toggleOtherReason()" required>
+                    <label class="form-label">Reason <span style="color: var(--secondary);">*</span></label>
+                    <select name="reason" id="reasonSelect" class="form-control" onchange="toggleOtherReason()" required>
                         <option value="">Select reason</option>
                         <option value="No-show interview">No-show interview</option>
                         <option value="No-show second interview">No-show second interview</option>
@@ -1510,20 +1486,26 @@ HTML = """
                 </div>
                 
                 <div id="otherReasonDiv" style="display: none; margin-bottom: 20px;">
-                    <label>Please specify reason:</label>
-                    <input type="text" name="other_reason" id="otherReason" placeholder="Enter custom reason..." style="width: 100%; padding: 12px 16px; border: 2px solid #e5e7eb; border-radius: 8px; margin-top: 8px;">
+                    <label class="form-label">Specify Reason:</label>
+                    <input type="text" name="other_reason" id="otherReason" class="form-control" placeholder="Enter custom reason">
                 </div>
                 
                 <div class="form-group">
-                    <label>Added By</label>
-                    <input type="text" name="added_by" placeholder="e.g., HR Department">
+                    <label class="form-label">Additional Notes</label>
+                    <textarea name="notes" class="form-control" rows="3" placeholder="Enter any additional notes..."></textarea>
                 </div>
                 
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-save"></i> Save
+                <div class="form-group">
+                    <label class="form-label">Added By</label>
+                    <input type="text" name="added_by" class="form-control" value="HR Department">
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="submit" class="action-btn primary" style="flex: 1;">
+                        <i class="fas fa-save"></i>
+                        Save to Blacklist
                     </button>
-                    <button type="button" class="btn btn-outline" onclick="hideAddModal()">
+                    <button type="button" class="action-btn secondary" style="flex: 1;" onclick="hideAddModal()">
                         Cancel
                     </button>
                 </div>
@@ -1537,93 +1519,186 @@ HTML = """
             <div class="modal-header">
                 <h3>
                     <i class="fas fa-upload"></i>
-                    Import Blacklist
+                    Import Blacklist Data
                 </h3>
                 <button class="close-modal" onclick="hideImportModal()">&times;</button>
             </div>
             
             <form method="POST" action="/import" enctype="multipart/form-data">
                 <div class="form-group">
-                    <label>Select File <span style="color: #ef4444;">*</span></label>
-                    <input type="file" name="file" accept=".csv, .xlsx, .xls" required style="padding: 10px; border: 2px dashed #d1d5db; width: 100%;">
-                    <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
-                        <i class="fas fa-info-circle"></i> 
-                        Supported: CSV, Excel (.xlsx, .xls)<br>
-                        Columns: Name, Phone, Position, Reason
+                    <label class="form-label">Select File <span style="color: var(--secondary);">*</span></label>
+                    <input type="file" name="file" class="form-control" accept=".csv, .xlsx, .xls" required style="padding: 10px;">
+                    <p style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+                        <i class="fas fa-info-circle"></i>
+                        Supported formats: CSV, Excel (.xlsx, .xls)<br>
+                        Required columns: Name, Phone, Position, Reason
                     </p>
                 </div>
                 
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-check"></i> Import
+                <div class="modal-footer">
+                    <button type="submit" class="action-btn primary" style="flex: 1;">
+                        <i class="fas fa-check"></i>
+                        Import Data
                     </button>
-                    <button type="button" class="btn btn-outline" onclick="hideImportModal()">
+                    <button type="button" class="action-btn secondary" style="flex: 1;" onclick="hideImportModal()">
                         Cancel
                     </button>
                 </div>
             </form>
         </div>
     </div>
-    
     <script>
-        function showPage(page) {
+    // Page Navigation
+    function showPage(page, element) {
+        console.log("Showing page: " + page);
+        console.log("Element: ", element);
+        
+        // Hide all pages
+        document.querySelectorAll('.page').forEach(p => {
+            console.log("Hiding page: " + p.id);
+            p.classList.remove('active-page');
+        });
+        
+        // Show selected page
+        var targetPage = document.getElementById('page-' + page);
+        console.log("Target page: ", targetPage);
+        if (targetPage) {
+            targetPage.classList.add('active-page');
+            console.log("Added active class to: page-" + page);
+        } else {
+            console.log("Page not found: page-" + page);
+        }
+        
+        // Remove active class from all nav items
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.classList.remove('active');
+        });
+        
+        // Add active class to clicked nav item
+        if (element) {
+            element.classList.add('active');
+            console.log("Added active class to clicked nav item");
+        }
+    }
+
+    // Modal Functions
+    function showAddModal() {
+        document.getElementById('addModal').style.display = 'flex';
+    }
+
+    function hideAddModal() {
+        document.getElementById('addModal').style.display = 'none';
+        document.getElementById('reasonSelect').value = '';
+        document.getElementById('otherReasonDiv').style.display = 'none';
+        document.getElementById('otherReason').value = '';
+    }
+
+    function showImportModal() {
+        document.getElementById('importModal').style.display = 'flex';
+    }
+
+    function hideImportModal() {
+        document.getElementById('importModal').style.display = 'none';
+    }
+
+    function toggleOtherReason() {
+        var select = document.getElementById('reasonSelect');
+        var otherDiv = document.getElementById('otherReasonDiv');
+        var otherInput = document.getElementById('otherReason');
+        
+        if (select.value === 'Other') {
+            otherDiv.style.display = 'block';
+            otherInput.required = true;
+        } else {
+            otherDiv.style.display = 'none';
+            otherInput.required = false;
+            otherInput.value = '';
+        }
+    }
+
+    function validateAndShowLoading() {
+        var folderName = document.getElementById('folderName').value;
+        if (!folderName) {
+            alert('Please enter a folder name');
+            return false;
+        }
+        document.getElementById('loading').style.display = 'block';
+        return true;
+    }
+
+    // Search functionality
+    function searchTable() {
+        var input = document.getElementById('searchInput');
+        var filter = input.value.toUpperCase();
+        var table = document.getElementById('blacklistTable');
+        var tr = table.getElementsByTagName('tr');
+        
+        for (var i = 1; i < tr.length; i++) {
+            var tdArray = tr[i].getElementsByTagName('td');
+            var found = false;
+            for (var j = 0; j < tdArray.length - 1; j++) {
+                if (tdArray[j]) {
+                    var txtValue = tdArray[j].textContent || tdArray[j].innerText;
+                    if (txtValue.toUpperCase().indexOf(filter) > -1) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            tr[i].style.display = found ? '' : 'none';
+        }
+    }
+
+    function searchBlacklist() {
+        var input = document.getElementById('blacklistSearch');
+        var filter = input.value.toUpperCase();
+        var table = document.getElementById('fullBlacklistTable');
+        var tr = table.getElementsByTagName('tr');
+        
+        for (var i = 1; i < tr.length; i++) {
+            var tdArray = tr[i].getElementsByTagName('td');
+            var found = false;
+            for (var j = 0; j < tdArray.length - 1; j++) {
+                if (tdArray[j]) {
+                    var txtValue = tdArray[j].textContent || tdArray[j].innerText;
+                    if (txtValue.toUpperCase().indexOf(filter) > -1) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            tr[i].style.display = found ? '' : 'none';
+        }
+    }
+
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+        if (event.target.classList.contains('modal')) {
+            event.target.style.display = 'none';
+        }
+    }
+
+    // Set active page based on URL
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log("DOM loaded");
+        const path = window.location.pathname;
+        console.log("Current path:", path);
+        
+        if (path === '/clean') {
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active-page'));
-            document.getElementById('page-' + page).classList.add('active-page');
+            document.getElementById('page-clean').classList.add('active-page');
             
             document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-            event.target.classList.add('active');
-        }
-        
-        function showAddModal() {
-            document.getElementById('addModal').style.display = 'flex';
-            document.getElementById('reasonSelect').value = '';
-            document.getElementById('otherReasonDiv').style.display = 'none';
-            document.getElementById('otherReason').value = '';
-        }
-        
-        function hideAddModal() {
-            document.getElementById('addModal').style.display = 'none';
-        }
-        
-        function showImportModal() {
-            document.getElementById('importModal').style.display = 'flex';
-        }
-        
-        function hideImportModal() {
-            document.getElementById('importModal').style.display = 'none';
-        }
-        
-        function toggleOtherReason() {
-            var select = document.getElementById('reasonSelect');
-            var otherDiv = document.getElementById('otherReasonDiv');
-            var otherInput = document.getElementById('otherReason');
+            document.querySelector('.nav-item:nth-child(4)').classList.add('active');
+        } else if (path === '/blacklisted-files') {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active-page'));
+            document.getElementById('page-blacklisted-files').classList.add('active-page');
             
-            if (select.value === 'Other') {
-                otherDiv.style.display = 'block';
-                otherInput.required = true;
-            } else {
-                otherDiv.style.display = 'none';
-                otherInput.required = false;
-                otherInput.value = '';
-            }
+            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+            document.querySelector('.nav-item:nth-child(5)').classList.add('active');
         }
-        
-        function validateAndShowLoading() {
-            var folderName = document.getElementById('folderName').value;
-            if (!folderName) {
-                alert('Please enter a folder name');
-                return false;
-            }
-            document.getElementById('loading').style.display = 'block';
-            return true;
-        }
-        
-        window.onclick = function(event) {
-            if (event.target.classList.contains('modal')) {
-                event.target.style.display = 'none';
-            }
-        }
-    </script>
+    });
+</script>
 </body>
 </html>
 """
@@ -1632,17 +1707,29 @@ HTML = """
 def home():
     conn = sqlite3.connect("blacklist.db")
     
-    rows = conn.execute(
-        "SELECT name, phone, position, reason, date_added, added_by, id FROM blacklist ORDER BY date_added DESC"
-    ).fetchall()
+    # Get column names first
+    cursor = conn.execute("PRAGMA table_info(blacklist)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    # Build query based on available columns
+    if 'email' in columns and 'notes' in columns and 'status' in columns:
+        rows = conn.execute(
+            "SELECT name, phone, email, position, reason, date_added, added_by, notes, status, id FROM blacklist ORDER BY date_added DESC"
+        ).fetchall()
+    else:
+        # Fallback to basic columns
+        rows = conn.execute(
+            "SELECT name, phone, position, reason, date_added, added_by, id FROM blacklist ORDER BY date_added DESC"
+        ).fetchall()
+        # Pad rows to match expected format
+        rows = [list(row) + ['', 'active', row[-1]] for row in rows]
     
     total = conn.execute("SELECT COUNT(*) FROM blacklist").fetchone()[0]
+    conn.close()
     
     # Get folder stats
     clean_folders, blacklisted_folders = get_folder_structure()
     clean_files_count, blacklisted_files_count = get_file_count()
-    
-    conn.close()
     
     # Get scan results from query params
     scan_results = None
@@ -1666,7 +1753,8 @@ def home():
         current_clean_files=[],
         current_blacklisted_folder=None,
         current_blacklisted_files=[],
-        scan_results=scan_results
+        scan_results=scan_results,
+        datetime=datetime
     )
 
 @app.route("/scan", methods=["POST"])
@@ -1675,7 +1763,7 @@ def scan_folder():
     files = request.files.getlist('folder')
     folder_name = request.form.get('folder_name', '').strip()
     
-    if not files:
+    if not files or files[0].filename == '':
         flash("❌ No files selected", "error")
         return redirect("/#scan")
     
@@ -1690,7 +1778,6 @@ def scan_folder():
     # Get blacklisted names from database
     conn = sqlite3.connect("blacklist.db")
     blacklisted = [row[0] for row in conn.execute("SELECT name FROM blacklist").fetchall()]
-    conn.close()
     
     # Create target folders
     clean_target = os.path.join(CLEAN_FOLDER, folder_name)
@@ -1702,6 +1789,7 @@ def scan_folder():
     clean_count = 0
     blacklisted_count = 0
     found_names = set()
+    total_files = len([f for f in files if f.filename])
     
     # Process each file
     for file in files:
@@ -1737,7 +1825,19 @@ def scan_folder():
                 shutil.move(temp_path, dest)
                 clean_count += 1
     
-    flash(f"✅ Scan complete! Clean: {clean_count}, Blacklisted: {blacklisted_count}", "success")
+    # Save scan history if table exists
+    try:
+        conn.execute(
+            "INSERT INTO scan_history (scan_date, folder_name, total_files, clean_count, blacklisted_count, found_names) VALUES (?, ?, ?, ?, ?, ?)",
+            (datetime.now().strftime("%Y-%m-%d %H:%M"), folder_name, total_files, clean_count, blacklisted_count, ','.join(found_names))
+        )
+        conn.commit()
+    except:
+        pass  # Skip if table doesn't exist
+    
+    conn.close()
+    
+    flash(f"✅ Scan complete! Found {clean_count} clean CVs and {blacklisted_count} blacklisted CVs", "success")
     
     # Redirect with results
     return redirect(f"/?scan_results=1&clean={clean_count}&blacklisted={blacklisted_count}&folder={folder_name}&names={','.join(found_names)}")
@@ -1748,9 +1848,22 @@ def view_clean():
     folder_name = request.args.get('folder')
     
     conn = sqlite3.connect("blacklist.db")
-    rows = conn.execute(
-        "SELECT name, phone, position, reason, date_added, added_by, id FROM blacklist ORDER BY date_added DESC"
-    ).fetchall()
+    
+    # Get column names first
+    cursor = conn.execute("PRAGMA table_info(blacklist)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    # Build query based on available columns
+    if 'email' in columns and 'notes' in columns and 'status' in columns:
+        rows = conn.execute(
+            "SELECT name, phone, email, position, reason, date_added, added_by, notes, status, id FROM blacklist ORDER BY date_added DESC"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT name, phone, position, reason, date_added, added_by, id FROM blacklist ORDER BY date_added DESC"
+        ).fetchall()
+        rows = [list(row) + ['', 'active', row[-1]] for row in rows]
+    
     total = conn.execute("SELECT COUNT(*) FROM blacklist").fetchone()[0]
     conn.close()
     
@@ -1771,7 +1884,6 @@ def view_clean():
                     mtime = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%m-%d %H:%M')
                     current_clean_files.append({'name': f, 'size': size, 'date': mtime})
     
-    # Force the clean page to be active
     html = render_template_string(
         HTML,
         rows=rows,
@@ -1784,12 +1896,9 @@ def view_clean():
         current_clean_files=current_clean_files,
         current_blacklisted_folder=None,
         current_blacklisted_files=[],
-        scan_results=None
+        scan_results=None,
+        datetime=datetime
     )
-    
-    # Add a script to activate the clean page
-    html = html.replace('active-page', '')    # Add a script to activate the clean page
-    html = html.replace('id="page-clean" class="page"', 'id="page-clean" class="page active-page"')
     
     return html
 
@@ -1799,9 +1908,22 @@ def view_blacklisted():
     folder_name = request.args.get('folder')
     
     conn = sqlite3.connect("blacklist.db")
-    rows = conn.execute(
-        "SELECT name, phone, position, reason, date_added, added_by, id FROM blacklist ORDER BY date_added DESC"
-    ).fetchall()
+    
+    # Get column names first
+    cursor = conn.execute("PRAGMA table_info(blacklist)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    # Build query based on available columns
+    if 'email' in columns and 'notes' in columns and 'status' in columns:
+        rows = conn.execute(
+            "SELECT name, phone, email, position, reason, date_added, added_by, notes, status, id FROM blacklist ORDER BY date_added DESC"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT name, phone, position, reason, date_added, added_by, id FROM blacklist ORDER BY date_added DESC"
+        ).fetchall()
+        rows = [list(row) + ['', 'active', row[-1]] for row in rows]
+    
     total = conn.execute("SELECT COUNT(*) FROM blacklist").fetchone()[0]
     conn.close()
     
@@ -1824,10 +1946,9 @@ def view_blacklisted():
                         'name': f, 
                         'size': size, 
                         'date': mtime,
-                        'matched_name': 'Unknown'  # You can enhance this later
+                        'matched_name': 'Unknown'
                     })
     
-    # Force the blacklisted page to be active
     html = render_template_string(
         HTML,
         rows=rows,
@@ -1840,11 +1961,9 @@ def view_blacklisted():
         current_clean_files=[],
         current_blacklisted_folder=current_blacklisted_folder,
         current_blacklisted_files=current_blacklisted_files,
-        scan_results=None
+        scan_results=None,
+        datetime=datetime
     )
-    
-    # Add a script to activate the blacklisted page
-    html = html.replace('id="page-blacklisted-files" class="page"', 'id="page-blacklisted-files" class="page active-page"')
     
     return html
 
@@ -1855,17 +1974,40 @@ def add():
         reason = request.form["other_reason"]
     
     conn = sqlite3.connect("blacklist.db")
-    conn.execute(
-        "INSERT INTO blacklist (name, phone, position, reason, date_added, added_by) VALUES (?,?,?,?,?,?)",
-        (
-            request.form["name"],
-            request.form.get("phone", ""),
-            request.form.get("position", ""),
-            reason,
-            datetime.now().strftime("%Y-%m-%d"),
-            request.form.get("added_by", "HR")
+    
+    # Get column names
+    cursor = conn.execute("PRAGMA table_info(blacklist)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    # Build insert query based on available columns
+    if 'email' in columns and 'notes' in columns and 'status' in columns:
+        conn.execute(
+            "INSERT INTO blacklist (name, phone, email, position, reason, date_added, added_by, notes, status) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                request.form["name"],
+                request.form.get("phone", ""),
+                request.form.get("email", ""),
+                request.form.get("position", ""),
+                reason,
+                datetime.now().strftime("%Y-%m-%d"),
+                request.form.get("added_by", "HR"),
+                request.form.get("notes", ""),
+                "active"
+            )
         )
-    )
+    else:
+        conn.execute(
+            "INSERT INTO blacklist (name, phone, position, reason, date_added, added_by) VALUES (?,?,?,?,?,?)",
+            (
+                request.form["name"],
+                request.form.get("phone", ""),
+                request.form.get("position", ""),
+                reason,
+                datetime.now().strftime("%Y-%m-%d"),
+                request.form.get("added_by", "HR")
+            )
+        )
+    
     conn.commit()
     conn.close()
     flash("✅ Added to blacklist successfully", "success")
@@ -1883,17 +2025,29 @@ def delete(record_id):
 @app.route("/export")
 def export():
     conn = sqlite3.connect("blacklist.db")
-    rows = conn.execute("SELECT name, phone, position, reason, date_added, added_by FROM blacklist").fetchall()
+    
+    # Get column names
+    cursor = conn.execute("PRAGMA table_info(blacklist)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    # Build query based on available columns
+    if 'email' in columns and 'notes' in columns and 'status' in columns:
+        rows = conn.execute("SELECT name, phone, email, position, reason, date_added, added_by, notes, status FROM blacklist").fetchall()
+        headers = ['Name', 'Phone', 'Email', 'Position', 'Reason', 'Date Added', 'Added By', 'Notes', 'Status']
+    else:
+        rows = conn.execute("SELECT name, phone, position, reason, date_added, added_by FROM blacklist").fetchall()
+        headers = ['Name', 'Phone', 'Position', 'Reason', 'Date Added', 'Added By']
+    
     conn.close()
     
     filename = f"blacklist_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
     
     with open(filename, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow(['Name', 'Phone', 'Position', 'Reason', 'Date', 'Added By'])
+        writer.writerow(headers)
         writer.writerows(rows)
     
-    return send_file(filename, as_attachment=True)
+    return send_file(filename, as_attachment=True, download_name=filename)
 
 @app.route("/import", methods=["POST"])
 def import_file():
@@ -1911,6 +2065,10 @@ def import_file():
     try:
         conn = sqlite3.connect("blacklist.db")
         
+        # Get column names
+        cursor = conn.execute("PRAGMA table_info(blacklist)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
         if filename.endswith('.csv'):
             with open(filename, 'r', encoding='utf-8') as f:
                 reader = csv.reader(f)
@@ -1924,10 +2082,20 @@ def import_file():
                         position = row[2].strip() if len(row) > 2 and row[2].strip() else ""
                         reason = row[3].strip() if len(row) > 3 and row[3].strip() else "Imported"
                         
-                        conn.execute(
-                            "INSERT INTO blacklist (name, phone, position, reason, date_added, added_by) VALUES (?,?,?,?,?,?)",
-                            (name, phone, position, reason, datetime.now().strftime('%Y-%m-%d'), 'Import')
-                        )
+                        if 'email' in columns and 'notes' in columns and 'status' in columns:
+                            email = row[4].strip() if len(row) > 4 and row[4].strip() else ""
+                            notes = row[5].strip() if len(row) > 5 and row[5].strip() else ""
+                            status = row[6].strip() if len(row) > 6 and row[6].strip() else "active"
+                            
+                            conn.execute(
+                                "INSERT INTO blacklist (name, phone, email, position, reason, date_added, added_by, notes, status) VALUES (?,?,?,?,?,?,?,?,?)",
+                                (name, phone, email, position, reason, datetime.now().strftime('%Y-%m-%d'), 'Import', notes, status)
+                            )
+                        else:
+                            conn.execute(
+                                "INSERT INTO blacklist (name, phone, position, reason, date_added, added_by) VALUES (?,?,?,?,?,?)",
+                                (name, phone, position, reason, datetime.now().strftime('%Y-%m-%d'), 'Import')
+                            )
                         count += 1
         
         elif filename.endswith(('.xlsx', '.xls')):
@@ -1942,10 +2110,20 @@ def import_file():
                 position = str(row.iloc[2]) if len(row) > 2 and pd.notna(row.iloc[2]) else ""
                 reason = str(row.iloc[3]) if len(row) > 3 and pd.notna(row.iloc[3]) else "Imported"
                 
-                conn.execute(
-                    "INSERT INTO blacklist (name, phone, position, reason, date_added, added_by) VALUES (?,?,?,?,?,?)",
-                    (name, phone, position, reason, datetime.now().strftime('%Y-%m-%d'), 'Import')
-                )
+                if 'email' in columns and 'notes' in columns and 'status' in columns:
+                    email = str(row.iloc[4]) if len(row) > 4 and pd.notna(row.iloc[4]) else ""
+                    notes = str(row.iloc[5]) if len(row) > 5 and pd.notna(row.iloc[5]) else ""
+                    status = str(row.iloc[6]) if len(row) > 6 and pd.notna(row.iloc[6]) else "active"
+                    
+                    conn.execute(
+                        "INSERT INTO blacklist (name, phone, email, position, reason, date_added, added_by, notes, status) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (name, phone, email, position, reason, datetime.now().strftime('%Y-%m-%d'), 'Import', notes, status)
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO blacklist (name, phone, position, reason, date_added, added_by) VALUES (?,?,?,?,?,?)",
+                        (name, phone, position, reason, datetime.now().strftime('%Y-%m-%d'), 'Import')
+                    )
                 count += 1
         
         else:
@@ -1988,11 +2166,11 @@ def view_nested_file(folder_type, filepath):
     return send_file(full_path)
 
 if __name__ == "__main__":
-    print("="*50)
-    print("OTIC CV SCANNER - FIXED VERSION")
-    print("="*50)
-    print("🚀 Server running at: http://127.0.0.1:5000")
-    print("📁 Clean CVs count: Files in folders")
-    print("🚫 Blacklisted CVs count: Files in folders")
-    print("="*50)
+    print("="*60)
+    print("🚀 OTIC CV SCANNER - FIXED VERSION")
+    print("="*60)
+    print("📊 Dashboard: http://127.0.0.1:5000")
+    print("🎨 Company Colors: #02319A (Blue) & #FF0000 (Red)")
+    print("✅ Database automatically updated with new columns")
+    print("="*60)
     app.run(debug=True, host='0.0.0.0', port=5000)
